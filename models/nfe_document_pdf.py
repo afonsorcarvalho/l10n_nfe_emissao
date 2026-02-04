@@ -290,13 +290,23 @@ class NFeDocumentPdf(models.AbstractModel):
                 "type": "binary",
             }
             try:
-                if doc.file_report_id:
-                    doc.file_report_id.write(vals)
-                else:
-                    doc.file_report_id = self.env["ir.attachment"].create(vals)
-                _logger.warning("[DANFE] make_pdf: file_report_id definido doc_id=%s attachment_id=%s", doc.id, doc.file_report_id.id)
+                old_attachment = doc.file_report_id
+                new_attachment = self.env["ir.attachment"].create(vals)
+                doc.file_report_id = new_attachment
+                if old_attachment and old_attachment.exists():
+                    old_attachment.unlink()
+                _logger.info(
+                    "[DANFE] make_pdf: file_report_id atualizado doc_id=%s attachment_id=%s",
+                    doc.id,
+                    doc.file_report_id.id,
+                )
             except Exception as e:
-                _logger.warning("[DANFE] make_pdf: falha ao criar/gravar file_report_id doc_id=%s: %s", doc.id, e, exc_info=True)
+                _logger.warning(
+                    "[DANFE] make_pdf: falha ao criar/gravar file_report_id doc_id=%s: %s",
+                    doc.id,
+                    e,
+                    exc_info=True,
+                )
                 raise
         # Chamada via MRO (view_pdf) pode deixar super() sem make_pdf; EDI só faz pass
         try:

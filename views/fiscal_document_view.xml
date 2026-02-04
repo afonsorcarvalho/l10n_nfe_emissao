@@ -49,6 +49,15 @@
                     <field name="return_origin_document_id" invisible="not return_origin_document_id" />
                 </group>
             </group>
+
+            <!--
+                Attachment preview: exibe o DANFE (PDF) ao lado do formulário,
+                como nas faturas do Odoo. Requer div o_attachment_preview e
+                anexos (file_report_id) com res_model/res_id do documento.
+            -->
+            <xpath expr="//chatter" position="before">
+                <div class="o_attachment_preview"/>
+            </xpath>
         </field>
     </record>
 </odoo>

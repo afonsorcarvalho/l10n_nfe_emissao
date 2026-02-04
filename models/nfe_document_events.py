@@ -211,104 +211,119 @@ class NFeDocumentEvents(models.AbstractModel):
         """
         return self._document_cancel_nfe(justificative)
 
+    def _document_correction_nfe(self, justificative):
+        """
+        Carta de Correção NF-e: envia CCe à SEFAZ, registra em event_ids/chatter
+        e aplica o workflow (correction_reason). Chamado pelo wizard para não depender do MRO.
+        """
+        self.ensure_one()
+        doc = self
+        if not (
+            doc.document_type_id
+            and doc.document_type_id.code == "55"
+            and doc.nfe_key
+            and doc.state_edoc == SITUACAO_EDOC_AUTORIZADA
+        ):
+            from odoo.addons.l10n_br_fiscal_edi.models.document_workflow import DocumentWorkflow
+            return DocumentWorkflow._document_correction(self, justificative)
+        if not justificative or len(str(justificative).strip()) < 15:
+            raise UserError(
+                _("A correção deve ter no mínimo 15 caracteres.")
+            )
+        txt = str(justificative).strip()[:1000]
+        sequencia = 1
+        if hasattr(doc, "correction_event_ids") and doc.correction_event_ids:
+            sequencia = len(doc.correction_event_ids) + 1
+        if sequencia > 20:
+            raise UserError(
+                _("Limite de 20 Cartas de Correção por NF-e já atingido.")
+            )
+        processor = doc._get_nfe_processor()
+        result = processor.carta_correcao(
+            chave=doc.nfe_key,
+            sequencia=str(sequencia),
+            justificativa=txt,
+        )
+        _logger.info("CCe nº %s enviada para NF-e %s.", sequencia, doc.nfe_key)
+
+        resp_xml = None
+        cstat, xmotivo = None, None
+        if result is not None:
+            resp = getattr(result, "resposta", result)
+            if resp is not None:
+                cstat = getattr(resp, "cStat", None) or getattr(
+                    getattr(resp, "infEvento", None), "cStat", None
+                )
+                xmotivo = getattr(resp, "xMotivo", None) or getattr(
+                    getattr(resp, "infEvento", None), "xMotivo", None
+                )
+                if hasattr(resp, "to_xml"):
+                    try:
+                        resp_xml = resp.to_xml()
+                        if isinstance(resp_xml, bytes):
+                            resp_xml = resp_xml.decode("utf-8")
+                    except Exception:
+                        pass
+                elif hasattr(resp, "tag"):
+                    from lxml import etree as et
+                    try:
+                        resp_xml = et.tostring(resp, encoding="unicode", method="xml")
+                    except Exception:
+                        pass
+                elif hasattr(resp, "export") and callable(getattr(resp, "export")):
+                    from io import StringIO
+                    try:
+                        buf = StringIO()
+                        resp.export(buf, 0)
+                        resp_xml = buf.getvalue()
+                    except Exception:
+                        pass
+        nfe_sefaz_chatter.post_sefaz_event(
+            doc,
+            event_type="Carta de Correção",
+            cstat=str(cstat) if cstat else "135",
+            xmotivo=str(xmotivo) if xmotivo else _("Evento registrado"),
+            xml_content=resp_xml,
+        )
+        # Aba EDI: evento type "14" com document_id=doc para aparecer em event_ids e correction_event_ids
+        env_edi = EVENT_ENV_PROD if (getattr(doc.company_id, "nfe_environment", None) or "2") == "1" else EVENT_ENV_HML
+        event_model = doc.env["l10n_br_fiscal.event"]
+        xml_para_evento = resp_xml or "<?xml version='1.0'?><retEvento/>"
+        cce_event = event_model.create_event_save_xml(
+            company_id=doc.company_id,
+            environment=env_edi,
+            event_type="14",
+            xml_file=xml_para_evento,
+            document_id=doc,
+            sequence=str(sequencia),
+            justification=txt[:255],
+        )
+        parsed = _parse_ret_evento_xml(resp_xml) if resp_xml else {}
+        cce_event.set_done(
+            status_code=str(cstat) if cstat else "",
+            response=str(xmotivo) if xmotivo else "",
+            protocol_date=parsed.get("protocol_date"),
+            protocol_number=parsed.get("protocol_number") or "",
+            file_response_xml=resp_xml,
+        )
+        xmotivo_str = (str(xmotivo) if xmotivo else "").strip()
+        cce_event.write({
+            "message": xmotivo_str[:500] if xmotivo_str else "Response received",
+            "origin": doc.display_name or doc.name or "",
+            "partner_id": doc.partner_id.id if doc.partner_id else False,
+        })
+        # Garantir que o anexo XML da CCe (chatter) esteja visível na busca do merge DACCe
+        doc.env["ir.attachment"].flush_model()
+        doc.make_pdf()
+        # Forçar recarga do anexo do DANFE no cliente após atualização
+        if doc.file_report_id:
+            doc.invalidate_recordset(["file_report_id"])
+        from odoo.addons.l10n_br_fiscal_edi.models.document_workflow import DocumentWorkflow
+        return DocumentWorkflow._document_correction(self, justificative)
+
     def _document_correction(self, justificative):
         """
         Envia Carta de Correção Eletrônica (CCe) à SEFAZ (evento 110110).
-        Máximo 20 CCe por NF-e. Regenera DANFE após envio.
+        O wizard NF-e chama _document_correction_nfe diretamente para garantir execução (MRO).
         """
-        for doc in self:
-            if (
-                doc.document_type_id
-                and doc.document_type_id.code == "55"
-                and doc.nfe_key
-                and doc.state_edoc == SITUACAO_EDOC_AUTORIZADA
-            ):
-                if not justificative or len(str(justificative).strip()) < 15:
-                    raise UserError(
-                        _("A correção deve ter no mínimo 15 caracteres.")
-                    )
-                txt = str(justificative).strip()[:1000]
-                sequencia = 1
-                if hasattr(doc, "correction_event_ids") and doc.correction_event_ids:
-                    sequencia = len(doc.correction_event_ids) + 1
-                if sequencia > 20:
-                    raise UserError(
-                        _("Limite de 20 Cartas de Correção por NF-e já atingido.")
-                    )
-                processor = doc._get_nfe_processor()
-                result = processor.carta_correcao(
-                    chave=doc.nfe_key,
-                    sequencia=str(sequencia),
-                    justificativa=txt,
-                )
-                _logger.info("CCe nº %s enviada para NF-e %s.", sequencia, doc.nfe_key)
-
-                resp_xml = None
-                cstat, xmotivo = None, None
-                if result is not None:
-                    resp = getattr(result, "resposta", result)
-                    if resp is not None:
-                        cstat = getattr(resp, "cStat", None) or getattr(
-                            getattr(resp, "infEvento", None), "cStat", None
-                        )
-                        xmotivo = getattr(resp, "xMotivo", None) or getattr(
-                            getattr(resp, "infEvento", None), "xMotivo", None
-                        )
-                        if hasattr(resp, "to_xml"):
-                            try:
-                                resp_xml = resp.to_xml()
-                                if isinstance(resp_xml, bytes):
-                                    resp_xml = resp_xml.decode("utf-8")
-                            except Exception:
-                                pass
-                        elif hasattr(resp, "tag"):
-                            from lxml import etree as et
-                            try:
-                                resp_xml = et.tostring(resp, encoding="unicode", method="xml")
-                            except Exception:
-                                pass
-                        elif hasattr(resp, "export") and callable(getattr(resp, "export")):
-                            from io import StringIO
-                            try:
-                                buf = StringIO()
-                                resp.export(buf, 0)
-                                resp_xml = buf.getvalue()
-                            except Exception:
-                                pass
-                nfe_sefaz_chatter.post_sefaz_event(
-                    doc,
-                    event_type="Carta de Correção",
-                    cstat=str(cstat) if cstat else "135",
-                    xmotivo=str(xmotivo) if xmotivo else _("Evento registrado"),
-                    xml_content=resp_xml,
-                )
-                # Aba EDI: evento Carta de Correção (l10n_br_fiscal.event type "14"; aparece em correction_event_ids)
-                if hasattr(doc, "authorization_event_id"):
-                    env_edi = EVENT_ENV_PROD if (getattr(doc.company_id, "nfe_environment", None) or "2") == "1" else EVENT_ENV_HML
-                    event_model = doc.env["l10n_br_fiscal.event"]
-                    xml_para_evento = resp_xml or "<?xml version='1.0'?><retEvento/>"
-                    cce_event = event_model.create_event_save_xml(
-                        company_id=doc.company_id,
-                        environment=env_edi,
-                        event_type="14",
-                        xml_file=xml_para_evento,
-                        document_id=doc,
-                        sequence=str(sequencia),
-                        justification=txt[:255],
-                    )
-                    parsed = _parse_ret_evento_xml(resp_xml) if resp_xml else {}
-                    cce_event.set_done(
-                        status_code=str(cstat) if cstat else "",
-                        response=str(xmotivo) if xmotivo else "",
-                        protocol_date=parsed.get("protocol_date"),
-                        protocol_number=parsed.get("protocol_number") or "",
-                        file_response_xml=resp_xml,
-                    )
-                    xmotivo_str = (str(xmotivo) if xmotivo else "").strip()
-                    cce_event.write({
-                        "message": xmotivo_str[:500] if xmotivo_str else "Response received",
-                        "origin": doc.display_name or doc.name or "",
-                        "partner_id": doc.partner_id.id if doc.partner_id else False,
-                    })
-                doc.make_pdf()
-        return super()._document_correction(justificative)
+        return self._document_correction_nfe(justificative)
