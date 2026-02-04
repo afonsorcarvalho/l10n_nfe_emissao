@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    DANFE - Documento Auxiliar da NF-e.
+    Layout conforme Manual DANFE (MOC PR) - A4 Retrato.
+-->
+<odoo>
+    <record id="paperformat_br_nfe_danfe" model="report.paperformat">
+        <field name="name">DANFE NF-e A4 Retrato</field>
+        <field name="default" eval="False"/>
+        <field name="orientation">Portrait</field>
+        <field name="format">A4</field>
+        <field name="margin_top">10</field>
+        <field name="margin_bottom">10</field>
+        <field name="margin_left">10</field>
+        <field name="margin_right">10</field>
+        <field name="header_line" eval="False"/>
+    </record>
+
+    <record id="report_nfe_danfe" model="ir.actions.report">
+        <field name="name">DANFE NF-e</field>
+        <field name="model">l10n_br_fiscal.document</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">l10n_nfe_emissao.report_nfe_danfe_template</field>
+        <field name="report_file">l10n_nfe_emissao.report_nfe_danfe_template</field>
+        <field name="paperformat_id" ref="paperformat_br_nfe_danfe"/>
+        <field name="print_report_name">'DANFE-NFe-%s-%s' % (object.document_number, object.partner_id.name or '')</field>
+    </record>
+
+    <template id="report_nfe_danfe_template">
+        <t t-call="web.html_container">
+            <t t-foreach="docs" t-as="doc">
+                <t t-set="danfe" t-value="doc.env['l10n_nfe_emissao.danfe'].get_danfe_data(doc)"/>
+                <t t-call="l10n_nfe_emissao.danfe_layout">
+                    <t t-set="o" t-value="danfe"/>
+                </t>
+            </t>
+        </t>
+    </template>
+
+    <template id="danfe_layout">
+        <!-- Mesma família de fonte do banner NF-e cancelada (Helvetica) -->
+        <div class="page" style="font-family: Helvetica, Arial, sans-serif; font-size: 10px;">
+            <style>
+                .danfe-table { border-collapse: collapse; width: 100%; font-size: 9px; font-family: Helvetica, Arial, sans-serif; }
+                .danfe-table th, .danfe-table td { border: 1px solid #000; padding: 3px 4px; font-family: Helvetica, Arial, sans-serif; }
+                .danfe-table th { background: #f0f0f0; font-weight: bold; text-align: left; }
+                .danfe-header { text-align: center; font-weight: bold; margin-bottom: 8px; font-family: Helvetica, Arial, sans-serif; }
+                .danfe-chave { font-size: 12px; font-weight: bold; letter-spacing: 2px; font-family: Helvetica, Arial, sans-serif; }
+                .danfe-watermark { color: #999; font-size: 24px; text-align: center; padding: 20px; font-family: Helvetica, Arial, sans-serif; }
+            </style>
+
+            <!-- Marca d'água: CANCELADA se cancelada; SEM VALOR FISCAL se homologação ou não autorizada -->
+            <t t-if="o.get('is_cancelada')">
+                <div class="danfe-watermark">CANCELADA</div>
+            </t>
+            <t t-elif="o.get('sem_valor_fiscal')">
+                <div class="danfe-watermark">NF-E EMITIDA EM AMBIENTE DE HOMOLOGAÇÃO - SEM VALOR FISCAL</div>
+            </t>
+
+            <div class="danfe-header">
+                <span style="font-size: 14px;">DANFE</span><br/>
+                <span style="font-size: 9px;">DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA</span>
+            </div>
+
+            <table class="danfe-table">
+                <tr>
+                    <th colspan="2" style="width: 50%;">IDENTIFICAÇÃO DO DOCUMENTO</th>
+                    <th colspan="2">CHAVE DE ACESSO</th>
+                </tr>
+                <tr>
+                    <td><strong>Nº</strong> <t t-esc="o.get('serie')"/> / <t t-esc="o.get('numero')"/></td>
+                    <td><strong>Natureza:</strong> <t t-esc="o.get('natureza_op')"/></td>
+                    <td colspan="2" class="danfe-chave"><t t-esc="o.get('chave_formatada')"/></td>
+                </tr>
+                <tr>
+                    <td><strong><t t-esc="o.get('tipo_operacao')"/></strong></td>
+                    <td><strong>Data emissão:</strong> <t t-esc="o.get('data_emissao')"/></td>
+                    <td><strong>Protocolo:</strong></td>
+                    <td><t t-esc="o.get('nfe_protocol')"/></td>
+                </tr>
+            </table>
+
+            <table class="danfe-table" style="margin-top: 8px;">
+                <tr><th colspan="4">DADOS DO EMITENTE</th></tr>
+                <tr>
+                    <td colspan="4">
+                        <t t-set="comp" t-value="o.get('company')"/>
+                        <t t-if="comp">
+                            <strong><t t-esc="comp.legal_name or comp.name"/></strong><br/>
+                            <t t-esc="comp.street or ''"/>,
+                            <t t-esc="comp.street_number or 'S/N'"/>
+                            <t t-if="comp.street2"> - <t t-esc="comp.street2"/></t>
+                            - <t t-esc="comp.district or ''"/>
+                            - <t t-esc="comp.city_id.name if comp.city_id else ''"/>
+                            - <t t-esc="comp.state_id.code if comp.state_id else ''"/>
+                            - CEP: <t t-esc="comp.zip or ''"/>
+                            - Fone: <t t-esc="comp.phone or ''"/><br/>
+                            CNPJ: <t t-esc="comp.cnpj_cpf or ''"/>
+                            - IE: <t t-esc="o.get('company_inscr_est', '')"/>
+                        </t>
+                    </td>
+                </tr>
+            </table>
+
+            <table class="danfe-table" style="margin-top: 8px;">
+                <tr><th colspan="4">DADOS DO DESTINATÁRIO / REMETENTE</th></tr>
+                <tr>
+                    <td colspan="4">
+                        <t t-set="part" t-value="o.get('partner')"/>
+                        <t t-if="part">
+                            <strong><t t-esc="part.name or ''"/></strong><br/>
+                            <t t-esc="part.street or ''"/>,
+                            <t t-esc="part.street_number or 'S/N'"/>
+                            <t t-if="part.street2"> - <t t-esc="part.street2"/></t>
+                            - <t t-esc="part.district or ''"/>
+                            - <t t-esc="part.city_id.name if part.city_id else ''"/>
+                            - <t t-esc="part.state_id.code if part.state_id else ''"/>
+                            - CEP: <t t-esc="part.zip or ''"/><br/>
+                            CNPJ/CPF: <t t-esc="part.cnpj_cpf or ''"/>
+                            <t t-if="o.get('partner_inscr_est')"> - IE: <t t-esc="o.get('partner_inscr_est')"/></t>
+                        </t>
+                    </td>
+                </tr>
+            </table>
+
+            <table class="danfe-table" style="margin-top: 8px;">
+                <thead>
+                    <tr>
+                        <th style="width: 8%;">CÓD.</th>
+                        <th style="width: 28%;">DESCRIÇÃO</th>
+                        <th style="width: 8%;">NCM</th>
+                        <th style="width: 6%;">CST</th>
+                        <th style="width: 6%;">CFOP</th>
+                        <th style="width: 5%;">UN</th>
+                        <th style="width: 8%;">QTD</th>
+                        <th style="width: 10%;">V. UNIT</th>
+                        <th style="width: 10%;">V. TOTAL</th>
+                        <th style="width: 11%;">BC ICMS</th>
+                        <th style="width: 10%;">V. ICMS</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <t t-foreach="o.get('itens', [])" t-as="item">
+                        <tr>
+                            <td><t t-esc="item.get('codigo')"/></td>
+                            <td><t t-esc="item.get('descricao')"/></td>
+                            <td><t t-esc="item.get('ncm')"/></td>
+                            <td><t t-esc="item.get('cst')"/></td>
+                            <td><t t-esc="item.get('cfop')"/></td>
+                            <td><t t-esc="item.get('uom')"/></td>
+                            <td style="text-align: right;"><t t-esc="item.get('qtd')"/></td>
+                            <td style="text-align: right;"><t t-esc="item.get('v_unit')"/></td>
+                            <td style="text-align: right;"><t t-esc="item.get('v_total')"/></td>
+                            <td style="text-align: right;"><t t-esc="item.get('v_bc_icms')"/></td>
+                            <td style="text-align: right;"><t t-esc="item.get('v_icms')"/></td>
+                        </tr>
+                    </t>
+                </tbody>
+            </table>
+
+            <table class="danfe-table" style="margin-top: 8px;">
+                <tr>
+                    <th>Frete</th>
+                    <td><t t-esc="o.get('mod_frete_label')"/></td>
+                    <th>Base ICMS</th>
+                    <td style="text-align: right;"><t t-esc="o.get('v_bc_icms')"/></td>
+                </tr>
+                <tr>
+                    <th>Valor Produtos</th>
+                    <td style="text-align: right;"><t t-esc="o.get('v_prod')"/></td>
+                    <th>Valor ICMS</th>
+                    <td style="text-align: right;"><t t-esc="o.get('v_icms')"/></td>
+                </tr>
+                <tr>
+                    <th>Valor Frete</th>
+                    <td style="text-align: right;"><t t-esc="o.get('v_frete')"/></td>
+                    <th>Valor Total NF-e</th>
+                    <td style="text-align: right; font-weight: bold;"><t t-esc="o.get('v_nf')"/></td>
+                </tr>
+                <tr>
+                    <th>Valor Seguro</th>
+                    <td style="text-align: right;"><t t-esc="o.get('v_seg')"/></td>
+                    <td colspan="2"/>
+                </tr>
+                <tr>
+                    <th>Desconto</th>
+                    <td style="text-align: right;"><t t-esc="o.get('v_desc')"/></td>
+                    <td colspan="2"/>
+                </tr>
+            </table>
+
+            <p style="margin-top: 12px; font-size: 8px;">
+                Consulte pela chave de acesso em https://www.nfe.fazenda.gov.br/portal ou portal da SEFAZ.
+            </p>
+        </div>
+    </template>
+</odoo>

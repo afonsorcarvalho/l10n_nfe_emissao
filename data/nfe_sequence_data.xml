@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Sequência para idLote do envio de NF-e à SEFAZ.
+    Garante número único por envio (evita rejeição 104 - lote já processado).
+    idLote: 1 a 15 dígitos (schema TIdLote).
+-->
+<odoo>
+    <data noupdate="1">
+        <record id="seq_nfe_lote_id" model="ir.sequence">
+            <field name="name">NF-e idLote</field>
+            <field name="code">l10n_nfe_emissao.nfe_lote_id</field>
+            <field name="padding">15</field>
+            <field name="number_increment">1</field>
+            <field name="number_next">1</field>
+            <field name="implementation">standard</field>
+        </record>
+    </data>
+</odoo>

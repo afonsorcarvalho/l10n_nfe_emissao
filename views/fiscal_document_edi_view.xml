@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Estende a aba EDI do documento fiscal: lista de eventos com
+    Message (retorno SEFAZ), Sequence, Partner e Lot Receipt Number.
+-->
+<odoo>
+    <record id="l10n_nfe_emissao_document_form_edi_events" model="ir.ui.view">
+        <field name="name">l10n_nfe_emissao.document.form.edi.events</field>
+        <field name="model">l10n_br_fiscal.document</field>
+        <field name="inherit_id" ref="l10n_br_fiscal_edi.document_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='event_ids']/list" position="inside">
+                <field name="sequence" string="Sequência" />
+                <field name="partner_id" string="Parceiro" />
+                <field name="lot_receipt_number" string="Nº Recibo Lote" />
+                <field name="message" string="Mensagem SEFAZ" />
+            </xpath>
+        </field>
+    </record>
+</odoo>

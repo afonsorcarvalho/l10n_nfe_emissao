@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    l10n_nfe_emissao: views para res.company
+
+    - fiscal_res_company_form_fix: correção Odoo 18 domains (parent.tax_framework)
+    - nfe_res_company_form: aba NF-e com configuração de ambiente (homologação/produção)
+-->
+<odoo>
+    <!-- Aba NF-e com ambiente SEFAZ (conforme padrão l10n_br_fiscal_dfe, l10n_br_nfse) -->
+    <record id="nfe_res_company_form" model="ir.ui.view">
+        <field name="name">l10n_nfe_emissao.res.company.form.nfe</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="l10n_br_fiscal.fiscal_res_company_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//notebook/page[@name='fiscal']/notebook" position="inside">
+                <page name="nfe" string="NF-e">
+                    <group name="nfe_settings" string="Configurações NF-e">
+                        <group>
+                            <field
+                                name="nfe_environment"
+                                required="1"
+                                help="Ambiente SEFAZ: Produção (documentos válidos) ou Homologação (testes)"
+                            />
+                            <field
+                                name="nfe_serie_homologacao_id"
+                                options="{'no_create': True}"
+                                domain="[('document_type_id.code', '=', '55'), ('company_id', '=', id)]"
+                            />
+                            <field
+                                name="nfe_serie_producao_id"
+                                options="{'no_create': True}"
+                                domain="[('document_type_id.code', '=', '55'), ('company_id', '=', id)]"
+                            />
+                        </group>
+                    </group>
+                </page>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Correção Odoo 18: domains estáticos -->
+    <record id="l10n_nfe_emissao_fiscal_res_company_form_fix" model="ir.ui.view">
+        <field name="name">l10n_nfe_emissao.res.company.form.fiscal.fix</field>
+        <field name="model">res.company</field>
+        <field name="inherit_id" ref="l10n_br_fiscal.fiscal_res_company_form" />
+        <field name="arch" type="xml">
+            <!-- piscofins_id: remove parent.tax_framework do domain -->
+            <field
+                name="piscofins_id"
+                position="attributes">
+                <attribute name="domain">[('piscofins_type', '=', 'company')]</attribute>
+            </field>
+            <!-- tax_ipi_id: remove parent.tax_framework do domain -->
+            <field
+                name="tax_ipi_id"
+                position="attributes">
+                <attribute name="domain">[('tax_group_id', '=', %(l10n_br_fiscal.tax_group_ipi)d)]</attribute>
+            </field>
+            <!-- tax_icms_id: remove parent.tax_framework do domain -->
+            <field
+                name="tax_icms_id"
+                position="attributes">
+                <attribute name="domain">['|', ('tax_group_id', '=', %(l10n_br_fiscal.tax_group_icms)d), ('tax_group_id', '=', %(l10n_br_fiscal.tax_group_icmssn)d)]</attribute>
+            </field>
+        </field>
+    </record>
+</odoo>

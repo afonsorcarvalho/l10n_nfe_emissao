@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Menus e ações específicas de NF-e.
+    Certificados: atalho em Fiscal > Configuração para facilitar acesso.
+    Consultar Notas Recebidas: atalho para distribuição DFe.
+-->
+<odoo>
+    <!-- Certificados direto em Fiscal > Configuração (visível sem abrir "Others") -->
+    <menuitem
+        id="menu_certificados_fiscal_config"
+        name="Certificados"
+        action="l10n_br_fiscal_certificate.certificate_action"
+        parent="l10n_br_fiscal.configuration_menu"
+        sequence="5"
+        groups="l10n_br_fiscal.group_manager"
+    />
+
+    <!-- Consultar Notas Recebidas (distribuição DFe) - Notas em que a empresa é destinatária -->
+    <menuitem
+        id="menu_consultar_notas_recebidas"
+        name="Consultar Notas Recebidas"
+        action="l10n_br_fiscal_dfe.dfe_action"
+        parent="l10n_br_fiscal.document_menu"
+        sequence="10"
+        groups="l10n_br_fiscal.group_manager"
+    />
+</odoo>

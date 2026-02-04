@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    View de documento fiscal com botão de emissão de NF-e.
+-->
+<odoo>
+    <record id="l10n_nfe_emissao_document_form" model="ir.ui.view">
+        <field name="name">l10n_nfe_emissao.document.form</field>
+        <field name="model">l10n_br_fiscal.document</field>
+        <field name="inherit_id" ref="l10n_br_fiscal.document_form" />
+        <field name="arch" type="xml">
+            <!-- Adiciona botões de emitir e consultar NF-e no header -->
+            <header position="inside">
+                <button
+                    name="action_emit_nfe"
+                    string="Emitir NF-e"
+                    type="object"
+                    class="oe_highlight"
+                    invisible="state_edoc != 'em_digitacao' or document_type != '55'"
+                    help="Gera XML, assina e transmite NF-e à SEFAZ"
+                />
+                <button
+                    name="action_consultar_nfe"
+                    string="Consultar NF-e"
+                    type="object"
+                    invisible="not nfe_key or document_type != '55'"
+                    help="Consulta NF-e na SEFAZ e atualiza procNFe/XML assinado quando ausentes"
+                />
+            </header>
+
+            <!-- Adiciona campos de série e número para edição fácil -->
+            <field name="document_serie_id" position="after">
+                <field
+                    name="document_number"
+                    string="Número"
+                    help="Número do documento. Pode ser alterado antes da emissão."
+                    readonly="nfe_key"
+                />
+            </field>
+
+            <!-- Referência mínima à NF-e; demais dados (protocolo, XMLs, DANFE) concentrados na aba EDI -->
+            <group name="document_extra" position="after">
+                <group
+                    string="NF-e"
+                    name="nfe_emissao_data"
+                    invisible="document_type != '55'"
+                    col="2"
+                >
+                    <field name="nfe_key" invisible="not nfe_key" string="Chave NF-e" help="Chave de acesso. Protocolo, XMLs e DANFE estão na aba EDI." />
+                    <field name="return_origin_document_id" invisible="not return_origin_document_id" />
+                </group>
+            </group>
+        </field>
+    </record>
+</odoo>
