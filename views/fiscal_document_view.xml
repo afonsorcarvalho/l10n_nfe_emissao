@@ -8,16 +8,45 @@
         <field name="model">l10n_br_fiscal.document</field>
         <field name="inherit_id" ref="l10n_br_fiscal.document_form" />
         <field name="arch" type="xml">
-            <!-- Adiciona botões de emitir e consultar NF-e no header -->
+            <!-- Oculta botão Visualizar XML (XMLs na aba EDI) -->
+            <xpath expr="//button[@name='view_xml']" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            
+            <!-- Ajusta botão "Enviar" padrão para NF-e: visível em 'a_enviar' OU em 'em_digitacao' com chave (reenvio) -->
+            <xpath expr="//button[@name='action_document_send'][@string='Enviar']" position="attributes">
+                <attribute name="invisible">state_edoc != 'a_enviar' and (state_edoc != 'em_digitacao' or not nfe_key or document_type != '55')</attribute>
+            </xpath>
+
+            <!-- Oculta o título "55 - Nota Fiscal Eletrônica" para documentos tipo 55 -->
+            <xpath expr="//div[@class='oe_title']/h1" position="attributes">
+                <attribute name="invisible">document_type == '55'</attribute>
+            </xpath>
+            
+            <!-- Adiciona motivo da rejeição logo abaixo do título/ribbon -->
+            <xpath expr="//sheet/div[@class='oe_title']" position="after">
+                <div style="padding: 12px 15px; margin-bottom: 15px; background-color: #fff3cd; border-left: 4px solid #dc3545; color: #721c24;" invisible="state_edoc != 'rejeitada' or document_type != '55'">
+                    <div style="margin-bottom: 8px; font-weight: bold; font-size: 14px;">
+                        <i class="fa fa-exclamation-triangle" style="color: #dc3545;"/> Motivo da Rejeição:
+                    </div>
+                    <div style="margin-bottom: 6px;">
+                        <strong>Código:</strong> <field name="status_code" readonly="1" nolabel="1" class="oe_inline" style="padding-left: 5px;"/>
+                    </div>
+                    <div>
+                        <strong>Descrição:</strong> <field name="status_name" readonly="1" nolabel="1" class="oe_inline" style="padding-left: 5px;"/>
+                    </div>
+                </div>
+            </xpath>
+            
+            <!-- Ajusta botão "Confirmar" padrão: para NF-e (55), só visível em 'em_digitacao' sem chave -->
+            <xpath expr="//button[@name='action_document_confirm']" position="attributes">
+                <attribute name="invisible">state_edoc != 'em_digitacao' or (document_type == '55' and nfe_key)</attribute>
+                <attribute name="help">Confirma o documento. Para NF-e: gera a chave de acesso (imutável após confirmação) e altera o estado para 'Aguardando envio'.</attribute>
+            </xpath>
+            
+            <!-- Adiciona botões no header: Consultar -->
             <header position="inside">
-                <button
-                    name="action_emit_nfe"
-                    string="Emitir NF-e"
-                    type="object"
-                    class="oe_highlight"
-                    invisible="state_edoc != 'em_digitacao' or document_type != '55'"
-                    help="Gera XML, assina e transmite NF-e à SEFAZ"
-                />
+                <!-- Botão Consultar NF-e -->
                 <button
                     name="action_consultar_nfe"
                     string="Consultar NF-e"
@@ -27,12 +56,17 @@
                 />
             </header>
 
-            <!-- Adiciona campos de série e número para edição fácil -->
+            <!-- Série: readonly quando há chave (após confirmação) -->
+            <field name="document_serie_id" position="attributes">
+                <attribute name="readonly">nfe_key</attribute>
+            </field>
+            
+            <!-- Adiciona campo número para edição fácil; readonly quando há chave -->
             <field name="document_serie_id" position="after">
                 <field
                     name="document_number"
                     string="Número"
-                    help="Número do documento. Pode ser alterado antes da emissão."
+                    help="Número do documento. Pode ser alterado antes da confirmação."
                     readonly="nfe_key"
                 />
             </field>
@@ -45,7 +79,7 @@
                     invisible="document_type != '55'"
                     col="2"
                 >
-                    <field name="nfe_key" invisible="not nfe_key" string="Chave NF-e" help="Chave de acesso. Protocolo, XMLs e DANFE estão na aba EDI." />
+                    <field name="nfe_key" invisible="not nfe_key" string="Chave NF-e" help="Chave de acesso (imutável após confirmação). Protocolo, XMLs e DANFE estão na aba EDI." />
                     <field name="return_origin_document_id" invisible="not return_origin_document_id" />
                 </group>
             </group>

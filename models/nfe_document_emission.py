@@ -22,7 +22,9 @@ from odoo.exceptions import UserError, ValidationError
 from odoo.addons.l10n_br_fiscal.constants.fiscal import (
     EVENT_ENV_HML,
     EVENT_ENV_PROD,
+    SITUACAO_EDOC_A_ENVIAR,
     SITUACAO_EDOC_AUTORIZADA,
+    SITUACAO_EDOC_EM_DIGITACAO,
     SITUACAO_EDOC_REJEITADA,
 )
 
@@ -49,14 +51,14 @@ class NFeDocumentEmission(models.AbstractModel):
     _inherit = ["nfe.document.builders"]
     _abstract = True
 
-    def _prepare_nfe_emission(self):
+    def _gerar_chave_nfe(self):
         """
-        Monta a estrutura completa da NF-e para emissão (nfelib.Nfe leiaute 4.0).
-        Chama _validate_nfe_emission (definido no modelo principal).
+        Gera a chave de acesso da NF-e (44 dígitos) com código numérico aleatório.
+        
+        Retorna dict com: chave_nfe (44 dígitos), c_nf (8 dígitos), dv (1 dígito).
+        Usada na confirmação do documento para persistir a chave antes da transmissão.
         """
         self.ensure_one()
-        self._validate_nfe_emission()
-
         codigo_uf = self._get_codigo_uf(self.company_id.state_id)
         cnpj_raw = self.company_id.cnpj_cpf or ""
         cnpj = "".join(filter(str.isdigit, cnpj_raw)).zfill(14)
@@ -85,12 +87,46 @@ class NFeDocumentEmission(models.AbstractModel):
 
         dv = self._calcular_dv_nfe(chave_parcial)
         chave_nfe = chave_parcial + str(dv)
-        nfe_id = f"NFe{chave_nfe}"
+        
+        return {
+            "chave_nfe": chave_nfe,
+            "c_nf": codigo_numerico,
+            "dv": str(dv),
+        }
+
+    def _prepare_nfe_emission(self):
+        """
+        Monta a estrutura completa da NF-e para emissão (nfelib.Nfe leiaute 4.0).
+        Chama _validate_nfe_emission (definido no modelo principal).
+        
+        Se o documento já possui nfe_key (confirmado anteriormente), usa essa chave
+        em vez de gerar nova. Caso contrário, gera nova chave (comportamento original).
+        """
+        self.ensure_one()
+        self._validate_nfe_emission()
+
+        # Se já existe chave NF-e (documento confirmado ou reenvio), usa ela
+        if self.nfe_key and len(self.nfe_key) == 44:
+            chave_nfe = self.nfe_key
+            # Extrai componentes da chave: posições 35-43 = c_nf (codigo_numerico), 43-44 = dv
+            codigo_numerico = chave_nfe[35:43]
+            dv = chave_nfe[43:44]
+            nfe_id = f"NFe{chave_nfe}"
+            _logger.info(
+                "Usando chave NF-e existente (documento confirmado): %s", chave_nfe
+            )
+        else:
+            # Comportamento original: gera nova chave com código numérico aleatório
+            chave_info = self._gerar_chave_nfe()
+            chave_nfe = chave_info["chave_nfe"]
+            codigo_numerico = chave_info["c_nf"]
+            dv = chave_info["dv"]
+            nfe_id = f"NFe{chave_nfe}"
 
         inf_nfe = Nfe.InfNfe(
             versao="4.00",
             Id=nfe_id,
-            ide=self._build_nfe_ide(c_dv=str(dv), c_nf=codigo_numerico),
+            ide=self._build_nfe_ide(c_dv=dv, c_nf=codigo_numerico),
             emit=self._build_nfe_emit(),
             dest=self._build_nfe_dest(),
             det=self._build_nfe_items(),
@@ -107,6 +143,123 @@ class NFeDocumentEmission(models.AbstractModel):
         soma = sum(int(chave_parcial[i]) * pesos[i] for i in range(43))
         resto = soma % 11
         return 0 if resto in (0, 1) else 11 - resto
+
+    def action_confirmar_nfe(self):
+        """
+        Confirma o documento NF-e: gera e persiste a chave de acesso e altera o estado
+        para 'a_enviar' (Aguardando envio / Confirmada).
+        
+        A chave gerada aqui não poderá mais ser alterada. Após a confirmação, o botão
+        'Emitir NF-e' ficará disponível para transmissão à SEFAZ.
+        """
+        self.ensure_one()
+        
+        # Validações
+        if self.document_type_id.code != "55":
+            raise UserError(_("Esta ação é válida apenas para documentos tipo 55 (NF-e)."))
+        
+        if self.state_edoc != SITUACAO_EDOC_EM_DIGITACAO:
+            raise UserError(
+                _("Apenas documentos em 'Em digitação' podem ser confirmados. "
+                  "Estado atual: %s") % (self.state_edoc or "indefinido")
+            )
+        
+        if self.nfe_key:
+            raise UserError(
+                _("Este documento já possui chave NF-e (%s). Não é possível confirmar novamente.")
+                % self.nfe_key
+            )
+        
+        # Valida dados para emissão (série, número, empresa, parceiro, itens, certificado)
+        self._validate_nfe_emission()
+        
+        # Gera a chave de acesso
+        chave_info = self._gerar_chave_nfe()
+        chave_nfe = chave_info["chave_nfe"]
+        
+        # Persiste a chave e sincroniza document_key (padrão EDI)
+        vals = {"nfe_key": chave_nfe}
+        if hasattr(self, "document_key"):
+            vals["document_key"] = chave_nfe
+        self.write(vals)
+        
+        # Altera estado para 'a_enviar' (Aguardando envio / Confirmada)
+        self.write({"state_edoc": SITUACAO_EDOC_A_ENVIAR})
+        
+        _logger.info("Documento NF-e %s confirmado. Chave gerada: %s", self.id, chave_nfe)
+        
+        return {
+            "type": "ir.actions.client",
+            "tag": "display_notification",
+            "params": {
+                "title": _("Documento confirmado"),
+                "message": _(
+                    "Chave NF-e gerada com sucesso!\n\n"
+                    "Chave: %s\n\n"
+                    "O documento está pronto para emissão. Use o botão 'Emitir NF-e' "
+                    "para transmitir à SEFAZ."
+                ) % chave_nfe,
+                "type": "success",
+                "sticky": False,
+                "next": nfe_sefaz_chatter.action_reload_form(self),
+            },
+        }
+
+    # NOTA: Método comentado - usamos o botão "Voltar p/ Em Digitação" do l10n_br_fiscal
+    # A proteção da chave NF-e está no método write() de nfe_document.py
+    # def action_corrigir_reenvio_nfe(self):
+    #     """
+    #     Permite editar documento NF-e rejeitado pela SEFAZ para corrigir inconsistências
+    #     e reenviar com a mesma chave.
+    #     
+    #     O documento volta para o estado 'em_digitacao', mas a chave NF-e permanece
+    #     inalterada. Após corrigir os dados, o usuário pode usar 'Emitir NF-e' para
+    #     reenviar à SEFAZ com a mesma chave de acesso.
+    #     
+    #     NOTA: Não usado - substituído pelo botão "Voltar p/ Em Digitação" padrão.
+    #     """
+    #     self.ensure_one()
+    #     
+    #     # Validações
+    #     if self.document_type_id.code != "55":
+    #         raise UserError(_("Esta ação é válida apenas para documentos tipo 55 (NF-e)."))
+    #     
+    #     if self.state_edoc != SITUACAO_EDOC_REJEITADA:
+    #         raise UserError(
+    #             _("Esta ação é válida apenas para documentos rejeitados. "
+    #               "Estado atual: %s") % (self.state_edoc or "indefinido")
+    #         )
+    #     
+    #     if not self.nfe_key:
+    #         raise UserError(
+    #             _("Este documento não possui chave NF-e. "
+    #               "Não é possível reenviar sem chave.")
+    #         )
+    #     
+    #     # Volta para 'em_digitacao' (chave permanece inalterada)
+    #     self.write({"state_edoc": SITUACAO_EDOC_EM_DIGITACAO})
+    #     
+    #     _logger.info(
+    #         "Documento NF-e %s (chave %s) voltou para edição após rejeição.",
+    #         self.id, self.nfe_key
+    #     )
+    #     
+    #     return {
+    #         "type": "ir.actions.client",
+    #         "tag": "display_notification",
+    #         "params": {
+    #             "title": _("Documento disponível para edição"),
+    #             "message": _(
+    #                 "O documento voltou para o estado 'Em digitação'.\n\n"
+    #                 "Corrija os dados conforme o motivo da rejeição e use o botão "
+    #                 "'Emitir NF-e' para reenviar à SEFAZ.\n\n"
+    #                 "A chave NF-e (%s) não será alterada."
+    #             ) % self.nfe_key,
+    #             "type": "info",
+    #             "sticky": False,
+    #             "next": nfe_sefaz_chatter.action_reload_form(self),
+    #         },
+    #     }
 
     def _get_nfe_processor(self):
         """Cria processador NFe para transmissão à SEFAZ (NFeAdapter + TransmissaoSOAP)."""
@@ -228,10 +381,40 @@ class NFeDocumentEmission(models.AbstractModel):
 
     def action_emit_nfe(self):
         """
-        Emite NF-e: gera XML, assina e transmite à SEFAZ.
+        Emite NF-e: gera XML (usando chave existente se já confirmado), assina e transmite à SEFAZ.
+        
         Fluxo: _prepare_nfe_emission -> assinar -> enviar_lote -> parse -> atualizar documento.
+        
+        Permite emissão quando:
+        - state_edoc == 'a_enviar' (documento confirmado, aguardando envio), ou
+        - state_edoc == 'em_digitacao' E nfe_key preenchida (reenvio após rejeição).
         """
         self.ensure_one()
+        
+        # Validação de tipo de documento
+        if self.document_type_id.code != "55":
+            raise UserError(_("Esta ação é válida apenas para documentos tipo 55 (NF-e)."))
+        
+        # Validação de estado: permite a_enviar ou (em_digitacao com chave = reenvio)
+        if self.state_edoc == SITUACAO_EDOC_A_ENVIAR:
+            # Documento confirmado, aguardando envio (fluxo normal)
+            pass
+        elif self.state_edoc == SITUACAO_EDOC_EM_DIGITACAO and self.nfe_key:
+            # Documento em edição após rejeição, com chave já definida (reenvio)
+            _logger.info(
+                "Reenvio de NF-e %s após rejeição. Chave: %s",
+                self.id, self.nfe_key
+            )
+        else:
+            raise UserError(
+                _(
+                    "Para emitir a NF-e, o documento deve estar confirmado.\n\n"
+                    "Estado atual: %s\n\n"
+                    "Use o botão 'Confirmar' para gerar a chave NF-e e confirmar o documento "
+                    "antes de emitir."
+                ) % (self.state_edoc or "indefinido")
+            )
+        
         try:
             nfe = self._prepare_nfe_emission()
             xml_nfe = nfe.to_xml(indent="  ")
@@ -356,11 +539,24 @@ class NFeDocumentEmission(models.AbstractModel):
                 except Exception:
                     pass
 
+            # Chave NF-e: só preenche se ainda não existir (confirmação já grava a chave)
             if dados.get("chave"):
-                self.nfe_key = dados["chave"]
-                # Sincroniza chave para o padrão EDI (document_key usado em eventos e relatórios)
-                if hasattr(self, "document_key"):
-                    self.document_key = dados["chave"]
+                if not self.nfe_key:
+                    # Primeira emissão (sem confirmação prévia): grava chave do retorno
+                    self.nfe_key = dados["chave"]
+                    if hasattr(self, "document_key"):
+                        self.document_key = dados["chave"]
+                    _logger.info("Chave NF-e gravada do retorno SEFAZ: %s", dados["chave"])
+                elif self.nfe_key != dados["chave"]:
+                    # Chave já existe mas difere do retorno: alerta (não deveria acontecer)
+                    _logger.warning(
+                        "Chave NF-e no documento (%s) difere da retornada pela SEFAZ (%s). "
+                        "Mantendo chave do documento.",
+                        self.nfe_key, dados["chave"]
+                    )
+                else:
+                    # Chave já existe e é igual ao retorno: OK, não sobrescreve
+                    _logger.debug("Chave NF-e já gravada, não sobrescrita: %s", self.nfe_key)
             if dados.get("protocolo"):
                 self.nfe_protocol = dados["protocolo"]
             if dados.get("nRec"):
@@ -459,13 +655,19 @@ class NFeDocumentEmission(models.AbstractModel):
                         },
                     }
                 self.state_edoc = SITUACAO_EDOC_REJEITADA
-                msg = _("%s - %s") % (c_stat_val or "", dados.get("xMotivo", ""))
+                # Formata mensagem de rejeição com código e motivo bem destacados
+                msg_rejeicao = _(
+                    "Código: %s\n"
+                    "Motivo: %s\n\n"
+                    "Consulte o motivo da rejeição no formulário e use o botão 'Editar' "
+                    "para corrigir os dados antes de reenviar."
+                ) % (c_stat_val or "?", dados.get("xMotivo", "Sem descrição"))
                 return {
                     "type": "ir.actions.client",
                     "tag": "display_notification",
                     "params": {
                         "title": _("NF-e rejeitada pela SEFAZ"),
-                        "message": msg,
+                        "message": msg_rejeicao,
                         "type": "danger",
                         "sticky": True,
                         "next": nfe_sefaz_chatter.action_reload_form(self),

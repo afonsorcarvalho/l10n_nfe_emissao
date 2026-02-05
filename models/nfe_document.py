@@ -22,8 +22,10 @@ from odoo.addons.l10n_br_fiscal.constants.fiscal import (
     DOCUMENT_ISSUER_COMPANY,
     EVENT_ENV_HML,
     EVENT_ENV_PROD,
+    SITUACAO_EDOC_A_ENVIAR,
     SITUACAO_EDOC_AUTORIZADA,
     SITUACAO_EDOC_CANCELADA,
+    SITUACAO_EDOC_EM_DIGITACAO,
 )
 
 from . import nfe_sefaz_chatter
@@ -54,7 +56,10 @@ class FiscalDocument(models.Model):
     # --- Campos de rastreamento da NF-e ---
     nfe_key = fields.Char(
         string="Chave NF-e",
-        help="Chave de acesso da NF-e (44 dígitos)",
+        help=(
+            "Chave de acesso da NF-e (44 dígitos). "
+            "Gerada na confirmação do documento e imutável após definida."
+        ),
         readonly=True,
         copy=False,
     )
@@ -193,6 +198,33 @@ class FiscalDocument(models.Model):
                 doc.document_number = doc.document_serie_id.next_seq_number()
         return docs
 
+    def write(self, vals):
+        """
+        Protege a chave NF-e (nfe_key) contra alterações indevidas.
+        
+        Uma vez definida (na confirmação do documento), a chave não pode mais ser
+        alterada. Tentativas de modificar nfe_key quando já preenchida são bloqueadas,
+        garantindo a imutabilidade da chave de acesso após a confirmação.
+        """
+        # Se a escrita não envolve nfe_key, segue normalmente
+        if "nfe_key" not in vals:
+            return super().write(vals)
+        
+        # Se está tentando escrever nfe_key, verifica se já existe
+        for record in self:
+            if record.nfe_key and vals.get("nfe_key") != record.nfe_key:
+                # Já existe chave e está tentando alterar para valor diferente: bloqueia
+                raise ValidationError(
+                    _(
+                        "A chave NF-e não pode ser alterada após definida.\n\n"
+                        "Chave atual: %s\n"
+                        "Tentativa de alteração para: %s\n\n"
+                        "A chave é gerada na confirmação do documento e é imutável."
+                    ) % (record.nfe_key, vals.get("nfe_key"))
+                )
+        
+        return super().write(vals)
+
     def _create_return(self):
         """Cria documento de devolução e vincula à NF-e de origem."""
         return_docs = super()._create_return()
@@ -287,6 +319,36 @@ class FiscalDocument(models.Model):
             and not self.nfe_key
         ):
             self.document_number = self.document_serie_id.next_seq_number()
+
+    def action_document_confirm(self):
+        """
+        Sobrescreve action_document_confirm: para documentos tipo 55 (NF-e),
+        chama action_confirmar_nfe (gera chave e confirma documento).
+        Para outros tipos, usa comportamento padrão do l10n_br_fiscal.
+        """
+        self.ensure_one()
+        
+        # Se for NF-e (tipo 55), usa nosso fluxo de confirmação (gera chave)
+        if self.document_type_id and self.document_type_id.code == "55":
+            return self.action_confirmar_nfe()
+        
+        # Outros tipos de documento: comportamento padrão
+        return super().action_document_confirm()
+
+    def action_document_send(self):
+        """
+        Sobrescreve action_document_send: para documentos tipo 55 (NF-e), 
+        chama action_emit_nfe (emissão NF-e à SEFAZ).
+        Para outros tipos, usa comportamento padrão do l10n_br_fiscal.
+        """
+        self.ensure_one()
+        
+        # Se for NF-e (tipo 55), usa nosso fluxo de emissão
+        if self.document_type_id and self.document_type_id.code == "55":
+            return self.action_emit_nfe()
+        
+        # Outros tipos de documento: comportamento padrão
+        return super().action_document_send()
 
     def _validate_nfe_emission(self):
         """
