@@ -70,12 +70,23 @@ class NFeDocumentPdf(models.AbstractModel):
             reader = PdfReader(pdf_io)
             for page in reader.pages:
                 writer.add_page(page)
-            for att in attachments:
+            # Eventos de correção (type 14) ordenados por sequence para casar com anexos por id
+            correction_events = []
+            if hasattr(self, "correction_event_ids") and self.correction_event_ids:
+                correction_events = self.correction_event_ids.sorted(key=lambda e: (e.sequence or "0", e.id))
+            for idx, att in enumerate(attachments):
                 xml_raw = base64.b64decode(att.datas).decode("utf-8", errors="replace")
-                proc_xml = nfe_xml_utils.wrap_inf_evento_as_proc_evento(xml_raw)
+                # Anexo pode ser wrapper (retEvento + correcaoTexto) ou apenas retEvento (antigo)
+                ret_evento_xml = nfe_xml_utils.get_ret_evento_from_cce_attachment(xml_raw)
+                proc_xml = nfe_xml_utils.wrap_inf_evento_as_proc_evento(ret_evento_xml)
                 if not proc_xml:
                     continue
                 dacce_pdf = None
+                # Texto da correção: wrapper (correcaoTexto) ou xCorrecao no XML; fallback = justification do evento
+                x_correcao = nfe_xml_utils.extract_xcorrecao_from_infevento(xml_raw)
+                if not x_correcao and idx < len(correction_events):
+                    x_correcao = (correction_events[idx].justification or "").strip()
+                n_prot = nfe_xml_utils.extract_nprot_from_infevento(ret_evento_xml)
                 try:
                     dacce = DaCCe(xml=proc_xml)
                     dacce_pdf = dacce.output()
@@ -84,8 +95,6 @@ class NFeDocumentPdf(models.AbstractModel):
                         "[DANFE] DaCCe falhou (%s), usando fallback: %s",
                         att.name, e,
                     )
-                    x_correcao = nfe_xml_utils.extract_xcorrecao_from_infevento(xml_raw)
-                    n_prot = nfe_xml_utils.extract_nprot_from_infevento(xml_raw)
                     dacce_pdf = nfe_pdf_helpers.build_cce_fallback_pdf(self, x_correcao, n_prot=n_prot)
                 if dacce_pdf:
                     if isinstance(dacce_pdf, str):

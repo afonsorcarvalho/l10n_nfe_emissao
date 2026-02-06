@@ -10,6 +10,7 @@
     "website": "",
     "version": "18.0.1.0.0",
     "depends": [
+        "account",
         "l10n_br_base",
         "l10n_br_fiscal",
         "l10n_br_nfe_spec",
@@ -17,11 +18,19 @@
         "l10n_br_fiscal_dfe",  # Consulta distribuição DFe (notas recebidas)
         "l10n_br_fiscal_edi",  # EDI: eventos, PDF, CCe, Cancelamento
     ],
+    "assets": {
+        "web.assets_backend": [
+            "l10n_nfe_emissao/static/src/scss/form_document.scss",
+        ],
+    },
     "data": [
         "security/ir.model.access.csv",
         "data/nfe_sequence_data.xml",
         "report/report_nfe_danfe.xml",
         "views/res_company_view.xml",
+        "views/res_config_settings_view.xml",
+        "views/account_move_view.xml",
+        "views/nfe_spec_views.xml",
         "views/fiscal_document_view.xml",
         "views/fiscal_document_edi_view.xml",
         "views/l10n_nfe_emissao_menus.xml",

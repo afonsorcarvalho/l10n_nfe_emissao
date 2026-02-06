@@ -38,3 +38,10 @@ class ResCompany(models.Model):
         help="Série a utilizar para NF-e quando o ambiente for Produção. Deixe vazio para usar a série padrão do documento.",
         domain="[('document_type_id.code', '=', '55')]",
     )
+
+    # Ativa o uso do módulo de emissão de NF-e (checkbox em Configurações Gerais -> Fiscal).
+    nfe_emitter_active = fields.Boolean(
+        string="Emissor NF-e",
+        default=True,
+        help="Quando ativo, permite emitir NF-e a partir de faturas e usar as funcionalidades do módulo de emissão.",
+    )

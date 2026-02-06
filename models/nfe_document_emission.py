@@ -123,17 +123,25 @@ class NFeDocumentEmission(models.AbstractModel):
             dv = chave_info["dv"]
             nfe_id = f"NFe{chave_nfe}"
 
-        inf_nfe = Nfe.InfNfe(
-            versao="4.00",
-            Id=nfe_id,
-            ide=self._build_nfe_ide(c_dv=dv, c_nf=codigo_numerico),
-            emit=self._build_nfe_emit(),
-            dest=self._build_nfe_dest(),
-            det=self._build_nfe_items(),
-            total=self._build_nfe_total(),
-            transp=self._build_nfe_transp(),
-            pag=self._build_nfe_pag(),
-        )
+        # Constrói InfNfe com todos os grupos
+        inf_nfe_kwargs = {
+            "versao": "4.00",
+            "Id": nfe_id,
+            "ide": self._build_nfe_ide(c_dv=dv, c_nf=codigo_numerico),
+            "emit": self._build_nfe_emit(),
+            "dest": self._build_nfe_dest(),
+            "det": self._build_nfe_items(),
+            "total": self._build_nfe_total(),
+            "transp": self._build_nfe_transp(),
+            "pag": self._build_nfe_pag(),
+        }
+        
+        # Adiciona cobrança se houver dados preenchidos
+        cobr = self._build_nfe_cobr()
+        if cobr is not None:
+            inf_nfe_kwargs["cobr"] = cobr
+        
+        inf_nfe = Nfe.InfNfe(**inf_nfe_kwargs)
         return Nfe(infNFe=inf_nfe)
 
     def _calcular_dv_nfe(self, chave_parcial):
@@ -146,59 +154,57 @@ class NFeDocumentEmission(models.AbstractModel):
 
     def action_confirmar_nfe(self):
         """
-        Confirma o documento NF-e: gera e persiste a chave de acesso e altera o estado
-        para 'a_enviar' (Aguardando envio / Confirmada).
-        
-        A chave gerada aqui não poderá mais ser alterada. Após a confirmação, o botão
-        'Emitir NF-e' ficará disponível para transmissão à SEFAZ.
+        Confirma o documento NF-e: gera e persiste a chave de acesso (se ainda não existir)
+        e altera o estado para 'a_enviar' (Aguardando envio / Confirmada).
+
+        Se o documento já possui chave NF-e (ex.: reenvio após rejeição), a chave não
+        é gerada novamente; apenas o estado é alterado para permitir novo envio.
         """
         self.ensure_one()
-        
+
         # Validações
         if self.document_type_id.code != "55":
             raise UserError(_("Esta ação é válida apenas para documentos tipo 55 (NF-e)."))
-        
+
         if self.state_edoc != SITUACAO_EDOC_EM_DIGITACAO:
             raise UserError(
                 _("Apenas documentos em 'Em digitação' podem ser confirmados. "
                   "Estado atual: %s") % (self.state_edoc or "indefinido")
             )
-        
-        if self.nfe_key:
-            raise UserError(
-                _("Este documento já possui chave NF-e (%s). Não é possível confirmar novamente.")
-                % self.nfe_key
-            )
-        
+
         # Valida dados para emissão (série, número, empresa, parceiro, itens, certificado)
         self._validate_nfe_emission()
-        
-        # Gera a chave de acesso
-        chave_info = self._gerar_chave_nfe()
-        chave_nfe = chave_info["chave_nfe"]
-        
-        # Persiste a chave e sincroniza document_key (padrão EDI)
-        vals = {"nfe_key": chave_nfe}
-        if hasattr(self, "document_key"):
-            vals["document_key"] = chave_nfe
-        self.write(vals)
-        
+
+        chave_nfe = self.nfe_key
+        if not chave_nfe:
+            # Gera e persiste a chave de acesso (apenas quando ainda não existe)
+            chave_info = self._gerar_chave_nfe()
+            chave_nfe = chave_info["chave_nfe"]
+            vals = {"nfe_key": chave_nfe}
+            if hasattr(self, "document_key"):
+                vals["document_key"] = chave_nfe
+            self.write(vals)
+            _logger.info("Documento NF-e %s confirmado. Chave gerada: %s", self.id, chave_nfe)
+        else:
+            _logger.info(
+                "Documento NF-e %s confirmado usando chave existente: %s",
+                self.id,
+                chave_nfe,
+            )
+
         # Altera estado para 'a_enviar' (Aguardando envio / Confirmada)
         self.write({"state_edoc": SITUACAO_EDOC_A_ENVIAR})
-        
-        _logger.info("Documento NF-e %s confirmado. Chave gerada: %s", self.id, chave_nfe)
-        
+
         return {
             "type": "ir.actions.client",
             "tag": "display_notification",
             "params": {
                 "title": _("Documento confirmado"),
                 "message": _(
-                    "Chave NF-e gerada com sucesso!\n\n"
+                    "O documento está pronto para emissão.\n\n"
                     "Chave: %s\n\n"
-                    "O documento está pronto para emissão. Use o botão 'Emitir NF-e' "
-                    "para transmitir à SEFAZ."
-                ) % chave_nfe,
+                    "Use o botão 'Emitir NF-e' para transmitir à SEFAZ."
+                ) % (self.nfe_key or chave_nfe),
                 "type": "success",
                 "sticky": False,
                 "next": nfe_sefaz_chatter.action_reload_form(self),

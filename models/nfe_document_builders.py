@@ -9,6 +9,7 @@ conforme leiaute NFe 4.0. Depende de nfe.document.mappers.
 """
 
 import logging
+from datetime import datetime as dt_parse
 
 from nfelib.nfe.bindings.v4_0.leiaute_nfe_v4_00 import Tendereco, Tnfe
 from nfelib.nfe.bindings.v4_0.leiaute_nfe_v4_00 import TenderEmi
@@ -437,14 +438,342 @@ class NFeDocumentBuilders(models.AbstractModel):
         )
         return total
 
+    def _build_nfe_cobr(self):
+        """
+        Constrói tag <cobr> (cobrança) com fatura e duplicatas.
+        Aplica as regras de validação do MOC (NFe_MOC_AnexoI):
+        - 905: nFat, vOrig, vLiq obrigatórios quando há cobr
+        - 901: vDesc não pode ser maior que vOrig
+        - 902: vLiq = vOrig - vDesc
+        - 852: nDup com 3 algarismos sequenciais (001, 002, 003...)
+        - 900: dVenc >= Data de Emissão
+        - 850: dVenc em ordem crescente (>= parcela anterior)
+        - Y10: vDup obrigatório em cada dup
+        """
+        self.ensure_one()
+
+        if not self.nfe40_cobr_id:
+            return None
+
+        cobr_data = self.nfe40_cobr_id
+        cobr_kwargs = {}
+        total_nf = float(getattr(self, "fiscal_amount_total", 0) or 0)
+        doc_date = self.document_date
+        doc_date_date = doc_date.date() if doc_date else None
+
+        # --- Grupo Fatura (obrigatório quando há cobr: 905) ---
+        v_orig = total_nf
+        v_desc = 0.0
+        v_liq = total_nf
+        n_fat = "1"
+        if cobr_data.fat_id:
+            fat_data = cobr_data.fat_id
+            n_fat = str((fat_data.nfe40_nFat or "1")).strip() or "1"
+            v_orig = float(fat_data.nfe40_vOrig or total_nf)
+            v_desc = float(fat_data.nfe40_vDesc or 0)
+            v_liq = float(fat_data.nfe40_vLiq or (v_orig - v_desc))
+            # 901: vDesc não pode ser maior que vOrig
+            if v_desc > v_orig:
+                v_desc = v_orig
+            # 902: vLiq = vOrig - vDesc
+            v_liq = round(v_orig - v_desc, 2)
+        fat_kwargs = {
+            "nFat": n_fat,
+            "vOrig": f"{v_orig:.2f}",
+            "vLiq": f"{v_liq:.2f}",
+        }
+        if v_desc > 0:
+            fat_kwargs["vDesc"] = f"{v_desc:.2f}"
+        cobr_kwargs["fat"] = Nfe.InfNfe.Cobr.Fat(**fat_kwargs)
+
+        # --- Duplicatas: ordenar por dVenc (850), normalizar nDup (852), validar dVenc (900) e vDup ---
+        dup_list = []
+        if cobr_data.dup_ids:
+            # Só considerar parcelas com dVenc e vDup (900 e Y10)
+            dups_valid = [
+                r for r in cobr_data.dup_ids
+                if r.nfe40_dVenc is not None and r.nfe40_vDup is not None
+            ]
+            # 900: dVenc >= Data de Emissão; 850: ordenar por dVenc crescente
+            if doc_date_date:
+                dups_valid = [r for r in dups_valid if r.nfe40_dVenc >= doc_date_date]
+            dups_sorted = sorted(dups_valid, key=lambda r: r.nfe40_dVenc)
+            prev_dvenc = None
+            for idx, dup_rec in enumerate(dups_sorted):
+                d_venc = dup_rec.nfe40_dVenc
+                # 850: dVenc >= data da parcela anterior (já garantido pelo sort)
+                if prev_dvenc is not None and d_venc < prev_dvenc:
+                    continue
+                prev_dvenc = d_venc
+                n_dup_raw = (dup_rec.nfe40_nDup or "").strip()
+                # 852: nDup com 3 algarismos sequenciais (001, 002, 003...)
+                if not n_dup_raw or not n_dup_raw.replace(" ", "").isdigit():
+                    n_dup = f"{(idx + 1):03d}"
+                elif n_dup_raw.isdigit() and len(n_dup_raw) <= 3:
+                    n_dup = n_dup_raw.zfill(3)
+                else:
+                    n_dup = (n_dup_raw[:60]) if len(n_dup_raw) <= 60 else n_dup_raw[:60]
+                dup_list.append(
+                    Nfe.InfNfe.Cobr.Dup(
+                        nDup=n_dup,
+                        dVenc=str(d_venc),
+                        vDup=f"{float(dup_rec.nfe40_vDup):.2f}",
+                    )
+                )
+        if dup_list:
+            cobr_kwargs["dup"] = dup_list
+
+        if not dup_list and not cobr_data.fat_id:
+            return None
+
+        return Nfe.InfNfe.Cobr(**cobr_kwargs)
+
     def _build_nfe_transp(self):
-        """Constrói tag <transp>. modFrete 9 = Sem ocorrência de transporte."""
-        return Nfe.InfNfe.Transp(modFrete="9")
+        """
+        Constrói tag <transp> (transporte) com modalidade, transportadora, veículo e volumes.
+        Se não houver dados preenchidos, usa fallback: modFrete=9 (sem transporte).
+        """
+        self.ensure_one()
+        transp_kwargs = {}
+        
+        # Se não há dados de transporte ou modFrete não definido, usa fallback
+        if not self.nfe40_transp_id or not self.nfe40_transp_id.nfe40_modFrete:
+            return Nfe.InfNfe.Transp(modFrete="9")
+        
+        # Modalidade de frete (obrigatório)
+        transp_kwargs["modFrete"] = str(self.nfe40_transp_id.nfe40_modFrete)
+        
+        # Se modFrete = 9 (sem transporte), retorna apenas com modFrete
+        if self.nfe40_transp_id.nfe40_modFrete == "9":
+            return Nfe.InfNfe.Transp(**transp_kwargs)
+        
+        # Dados da transportadora
+        if self.nfe40_transp_id.transporta_id:
+            transporta_data = self.nfe40_transp_id.transporta_id
+            transporta_kwargs = {}
+            
+            # CNPJ (14 dígitos) ou CPF (11 dígitos) - schema NFe exige formato válido
+            cnpj_digits = "".join(
+                c for c in (transporta_data.nfe40_CNPJ or "") if c.isdigit()
+            )
+            cpf_digits = "".join(
+                c for c in (transporta_data.nfe40_CPF or "") if c.isdigit()
+            )
+            if len(cnpj_digits) == 14:
+                transporta_kwargs["CNPJ"] = cnpj_digits
+            elif len(cpf_digits) == 11:
+                transporta_kwargs["CPF"] = cpf_digits
+            # Se não tiver 14 nem 11 dígitos, não envia CNPJ/CPF (evita rejeição 225)
+            
+            # Razão Social/Nome
+            if transporta_data.nfe40_xNome:
+                transporta_kwargs["xNome"] = nfe_xml_utils.escape_xml_text(transporta_data.nfe40_xNome)
+            
+            # Inscrição Estadual
+            if transporta_data.nfe40_IE:
+                transporta_kwargs["IE"] = str(transporta_data.nfe40_IE)
+            
+            # Endereço
+            if transporta_data.nfe40_xEnder:
+                transporta_kwargs["xEnder"] = nfe_xml_utils.escape_xml_text(transporta_data.nfe40_xEnder)
+            
+            # Município
+            if transporta_data.nfe40_xMun:
+                transporta_kwargs["xMun"] = nfe_xml_utils.escape_xml_text(transporta_data.nfe40_xMun)
+            
+            # UF
+            if transporta_data.nfe40_UF:
+                transporta_kwargs["UF"] = str(transporta_data.nfe40_UF)
+            
+            if transporta_kwargs:
+                transp_kwargs["transporta"] = Nfe.InfNfe.Transp.Transporta(**transporta_kwargs)
+        
+        # Dados do veículo
+        if self.nfe40_transp_id.veicTransp_id:
+            veiculo_data = self.nfe40_transp_id.veicTransp_id
+            veiculo_kwargs = {}
+            
+            # Placa (obrigatório para veículo)
+            if veiculo_data.nfe40_placa:
+                veiculo_kwargs["placa"] = str(veiculo_data.nfe40_placa).upper()
+            
+            # UF
+            if veiculo_data.nfe40_UF:
+                veiculo_kwargs["UF"] = str(veiculo_data.nfe40_UF)
+            
+            # RNTC (Registro ANTT)
+            if veiculo_data.nfe40_RNTC:
+                veiculo_kwargs["RNTC"] = str(veiculo_data.nfe40_RNTC)
+            
+            if veiculo_kwargs:
+                transp_kwargs["veicTransp"] = Nfe.InfNfe.Transp.Tveiculo(**veiculo_kwargs)
+        
+        # Volumes transportados
+        vol_list = []
+        if self.nfe40_transp_id.vol_ids:
+            for vol_rec in self.nfe40_transp_id.vol_ids:
+                vol_kwargs = {}
+                
+                # Quantidade
+                if vol_rec.nfe40_qVol:
+                    vol_kwargs["qVol"] = str(vol_rec.nfe40_qVol)
+                
+                # Espécie
+                if vol_rec.nfe40_esp:
+                    vol_kwargs["esp"] = nfe_xml_utils.escape_xml_text(vol_rec.nfe40_esp)
+                
+                # Marca
+                if vol_rec.nfe40_marca:
+                    vol_kwargs["marca"] = nfe_xml_utils.escape_xml_text(vol_rec.nfe40_marca)
+                
+                # Numeração
+                if vol_rec.nfe40_nVol:
+                    vol_kwargs["nVol"] = str(vol_rec.nfe40_nVol)
+                
+                # Peso líquido
+                if vol_rec.nfe40_pesoL:
+                    vol_kwargs["pesoL"] = f"{float(vol_rec.nfe40_pesoL or 0):.3f}"
+                
+                # Peso bruto
+                if vol_rec.nfe40_pesoB:
+                    vol_kwargs["pesoB"] = f"{float(vol_rec.nfe40_pesoB or 0):.3f}"
+                
+                # Lacres
+                lacres_list = []
+                if vol_rec.lacres_ids:
+                    for lacre_rec in vol_rec.lacres_ids:
+                        if lacre_rec.nfe40_nLacre:
+                            lacres_list.append(
+                                Nfe.InfNfe.Transp.Vol.Lacres(nLacre=str(lacre_rec.nfe40_nLacre))
+                            )
+                
+                if lacres_list:
+                    vol_kwargs["lacres"] = lacres_list
+                
+                if vol_kwargs:
+                    vol_list.append(Nfe.InfNfe.Transp.Vol(**vol_kwargs))
+        
+        if vol_list:
+            transp_kwargs["vol"] = vol_list
+        
+        # Retenção ICMS do transporte
+        if self.nfe40_transp_id.retTransp_id:
+            ret_data = self.nfe40_transp_id.retTransp_id
+            ret_kwargs = {}
+            
+            # Valor do serviço (obrigatório)
+            if ret_data.nfe40_vServ:
+                ret_kwargs["vServ"] = f"{float(ret_data.nfe40_vServ or 0):.2f}"
+            
+            # BC da retenção (obrigatório)
+            if ret_data.nfe40_vBCRet:
+                ret_kwargs["vBCRet"] = f"{float(ret_data.nfe40_vBCRet or 0):.2f}"
+            
+            # Alíquota da retenção (obrigatório)
+            if ret_data.nfe40_pICMSRet:
+                ret_kwargs["pICMSRet"] = f"{float(ret_data.nfe40_pICMSRet or 0):.2f}"
+            
+            # Valor retido (obrigatório)
+            if ret_data.nfe40_vICMSRet:
+                ret_kwargs["vICMSRet"] = f"{float(ret_data.nfe40_vICMSRet or 0):.2f}"
+            
+            # CFOP (obrigatório)
+            if ret_data.nfe40_CFOP:
+                ret_kwargs["CFOP"] = str(ret_data.nfe40_CFOP)
+            
+            # Código município (obrigatório)
+            if ret_data.nfe40_cMunFG:
+                ret_kwargs["cMunFG"] = str(ret_data.nfe40_cMunFG)
+            
+            # Só adiciona se tiver todos os campos obrigatórios
+            if all(k in ret_kwargs for k in ["vServ", "vBCRet", "pICMSRet", "vICMSRet", "CFOP", "cMunFG"]):
+                transp_kwargs["retTransp"] = Nfe.InfNfe.Transp.RetTransp(**ret_kwargs)
+        
+        return Nfe.InfNfe.Transp(**transp_kwargs)
 
     def _build_nfe_pag(self):
-        """Constrói tag <pag>. detPag obrigatório: tPag 99=Outros, vPag=total."""
-        total_nf = float(getattr(self, "fiscal_amount_total", 0) or 0)
-        det_pag = Nfe.InfNfe.Pag.DetPag(
-            tPag="99", xPag="Pagamento à vista", vPag=f"{total_nf:.2f}",
-        )
-        return Nfe.InfNfe.Pag(detPag=[det_pag])
+        """
+        Constrói tag <pag> (pagamento) com formas de pagamento e troco.
+        Se não houver dados preenchidos, usa fallback: tPag 99=Outros, vPag=total da NF.
+        """
+        self.ensure_one()
+        pag_kwargs = {}
+        det_pag_list = []
+        
+        # Se há dados de pagamento cadastrados, usa-os
+        if self.nfe40_pag_id and self.nfe40_pag_id.detpag_ids:
+            for det_rec in self.nfe40_pag_id.detpag_ids:
+                det_kwargs = {}
+                
+                # Indicador de pagamento (À Vista/À Prazo)
+                if det_rec.nfe40_indPag:
+                    det_kwargs["indPag"] = str(det_rec.nfe40_indPag)
+                
+                # Tipo de pagamento (obrigatório): schema exige código de 2 dígitos (01, 02, ... 99)
+                tpag_raw = (det_rec.nfe40_tPag or "").strip()
+                if tpag_raw and len(tpag_raw) == 2 and tpag_raw.isdigit():
+                    det_kwargs["tPag"] = tpag_raw
+                else:
+                    det_kwargs["tPag"] = "99"  # Outros (valor inválido ou texto ex.: "prazo")
+                    if tpag_raw and not det_kwargs.get("xPag"):
+                        det_kwargs["xPag"] = tpag_raw  # preserva descrição em xPag
+                
+                # Descrição do meio de pagamento
+                if det_rec.nfe40_xPag:
+                    det_kwargs["xPag"] = str(det_rec.nfe40_xPag)
+                
+                # Valor do pagamento (obrigatório)
+                if det_rec.nfe40_vPag:
+                    det_kwargs["vPag"] = f"{float(det_rec.nfe40_vPag or 0):.2f}"
+                else:
+                    det_kwargs["vPag"] = "0.00"
+                
+                # Data do pagamento (dPag): incluir apenas se <= data de recebimento do XML (NT YA03a-10, rej. 657)
+                # Regra SEFAZ: "Data de Pagamento posterior a data de recebimento do XML" é inválida.
+                # Data de recebimento = data do envio do XML (hoje na montagem), não a data de emissão do doc.
+                data_recebimento_xml = fields.Date.context_today(self)
+                if det_rec.nfe40_dPag:
+                    d_pag = det_rec.nfe40_dPag
+                    if hasattr(d_pag, "strftime"):
+                        if d_pag <= data_recebimento_xml:
+                            det_kwargs["dPag"] = d_pag.strftime("%Y-%m-%d")
+                        # Se d_pag > data_recebimento_xml: omitir dPag (pagamento futuro; evita rejeição 657)
+                    else:
+                        # String (ex.: vindo de outro sistema): converte e valida antes de incluir
+                        try:
+                            d_pag_parsed = dt_parse.strptime(str(det_rec.nfe40_dPag), "%Y-%m-%d").date()
+                            if d_pag_parsed <= data_recebimento_xml:
+                                det_kwargs["dPag"] = str(det_rec.nfe40_dPag)
+                        except (ValueError, TypeError):
+                            pass
+                
+                # CNPJ transacional (incluir apenas quando preenchido; ordem do schema: após dPag vêm CNPJPag ou card)
+                if det_rec.nfe40_CNPJPag:
+                    det_kwargs["CNPJPag"] = str(det_rec.nfe40_CNPJPag)
+                # UFPag: omitido no XML para evitar rejeição 225 (schema espera CNPJPag/card nessa posição).
+                # O campo permanece no modelo para uso futuro se o schema/nfelib permitir.
+                # if det_rec.nfe40_UFPag:
+                #     det_kwargs["UFPag"] = str(det_rec.nfe40_UFPag)
+                
+                # Grupo de cartões/PIX não implementado no modelo nfe.document.pag.detpag
+                # (especificação NFe: nfe40_card; incluir aqui se for necessário no futuro)
+                
+                det_pag_list.append(Nfe.InfNfe.Pag.DetPag(**det_kwargs))
+            
+            # Troco (se aplicável, geralmente para NFC-e)
+            if self.nfe40_pag_id.nfe40_vTroco:
+                pag_kwargs["vTroco"] = f"{float(self.nfe40_pag_id.nfe40_vTroco or 0):.2f}"
+        
+        # Fallback: se não há pagamentos cadastrados, cria pagamento padrão
+        if not det_pag_list:
+            total_nf = float(getattr(self, "fiscal_amount_total", 0) or 0)
+            det_pag_list.append(
+                Nfe.InfNfe.Pag.DetPag(
+                    tPag="99",  # Outros
+                    xPag="Pagamento à vista",
+                    vPag=f"{total_nf:.2f}",
+                )
+            )
+        
+        pag_kwargs["detPag"] = det_pag_list
+        return Nfe.InfNfe.Pag(**pag_kwargs)

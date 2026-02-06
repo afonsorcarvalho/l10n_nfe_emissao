@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    l10n_nfe_emissao: fatura (account.move) – botão Emitir NF-e e link para documento fiscal.
+
+    - Botão "Emitir NF-e" visível em faturas de saída (venda/devolução) quando Emissor NF-e está ativo.
+    - Campo fiscal_document_id para abrir o documento fiscal referente.
+-->
+<odoo>
+    <record id="account_move_form_nfe" model="ir.ui.view">
+        <field name="name">account.move.form.nfe</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form" />
+        <field name="arch" type="xml">
+            <!-- Grupo NF-e: Emitir NF-e (quando ainda não emitida) ou Abrir NF-e (quando já emitida) -->
+            <xpath expr="//form/sheet" position="before">
+                <group name="nfe_invoice" invisible="move_type not in ('out_invoice', 'out_refund')">
+                    <button
+                        name="action_emit_nfe_from_invoice"
+                        type="object"
+                        string="Emitir NF-e"
+                        class="btn-primary"
+                        invisible="not company_id.nfe_emitter_active or state != 'posted' or (fiscal_document_id and fiscal_document_id.state_edoc == 'autorizada')"
+                        title="Monta e emite a NF-e referente a esta fatura."
+                    />
+                    <button
+                        name="action_open_fiscal_nfe"
+                        type="object"
+                        string="Abrir NF-e"
+                        class="btn-secondary"
+                        invisible="not fiscal_document_id"
+                        title="Abre o documento fiscal NF-e referente a esta fatura."
+                    />
+                    <field
+                        name="fiscal_document_id"
+                        options="{'no_create': True}"
+                        readonly="1"
+                    />
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

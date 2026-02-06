@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    l10n_nfe_emissao: configurações fiscais
+
+    - Oculta a opção NF-e/NFC-e (module_l10n_br_nfe) do l10n_br_fiscal.
+    - Exibe no lugar o checkbox "Emissor NF-e" (nfe_emitter_active por empresa).
+-->
+<odoo>
+    <record id="l10n_nfe_emissao_res_config_settings_form" model="ir.ui.view">
+        <field name="name">l10n_nfe_emissao.res.config.settings.form</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="l10n_br_fiscal.l10n_br_fiscal_res_config_settings_form" />
+        <field name="arch" type="xml">
+            <!-- Tornar invisível o setting NF-e/NFC-e (módulo l10n_br_nfe) -->
+            <xpath expr="//block[@name='fiscal_documents']/setting[.//field[@name='module_l10n_br_nfe']]" position="attributes">
+                <attribute name="invisible">1</attribute>
+            </xpath>
+            <!-- Inserir no lugar o checkbox Emissor NF-e -->
+            <xpath expr="//block[@name='fiscal_documents']/setting[.//field[@name='module_l10n_br_nfe']]" position="after">
+                <setting
+                    string="Emissor NF-e"
+                    help="Ativa o uso do módulo de emissão de NF-e (criação e envio a partir de faturas)."
+                >
+                    <field name="nfe_emitter_active" />
+                </setting>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Views para Cobrança, Pagamento e Transporte (modelos nfe.document.*).
+    Usadas ao criar/abrir Cobrança, Pagamento ou Transporte a partir do documento fiscal.
+-->
+<odoo>
+    <!-- List view Duplicatas (nfe.document.cobr.dup) -->
+    <record id="view_nfe_document_cobr_dup_list" model="ir.ui.view">
+        <field name="name">nfe.document.cobr.dup.list</field>
+        <field name="model">nfe.document.cobr.dup</field>
+        <field name="arch" type="xml">
+            <list editable="bottom" create="true" delete="true">
+                <field name="nfe40_nDup" string="Número" required="1"/>
+                <field name="nfe40_dVenc" string="Vencimento" required="1"/>
+                <field name="nfe40_vDup" string="Valor" required="1" widget="monetary"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form Cobrança -->
+    <record id="view_nfe_document_cobr_form" model="ir.ui.view">
+        <field name="name">nfe.document.cobr.form</field>
+        <field name="model">nfe.document.cobr</field>
+        <field name="arch" type="xml">
+            <form string="Cobrança NF-e">
+                <sheet>
+                    <group string="Formas de pagamento aceitas (tPag - referência)">
+                        <div class="text-muted" style="margin-bottom: 8px; font-size: 12px;">
+                            <p style="margin: 0 0 2px 0;">01=Dinheiro  02=Cheque  03=Crédito  04=Débito  05=Crédito Loja  10=Vale Aliment.  11=Vale Refeição  12=Vale Presente  13=Vale Combustível</p>
+                            <p style="margin: 0;">15=Boleto  16=Depósito  17=PIX  18=Transferência  19=Fidelidade  90=Sem pagamento  99=Outros</p>
+                        </div>
+                    </group>
+                    <group string="Dados da Fatura">
+                        <field name="fat_id" options="{'no_create': False, 'no_open': False}"/>
+                    </group>
+                    <group string="Duplicatas (lista)">
+                        <field name="dup_ids" nolabel="1"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Form Fatura -->
+    <record id="view_nfe_document_cobr_fat_form" model="ir.ui.view">
+        <field name="name">nfe.document.cobr.fat.form</field>
+        <field name="model">nfe.document.cobr.fat</field>
+        <field name="arch" type="xml">
+            <form string="Fatura">
+                <group>
+                    <field name="nfe40_nFat" string="Número da Fatura"/>
+                    <field name="nfe40_vOrig" string="Valor Original" widget="monetary"/>
+                    <field name="nfe40_vDesc" string="Desconto" widget="monetary"/>
+                    <field name="nfe40_vLiq" string="Valor Líquido" widget="monetary"/>
+                </group>
+            </form>
+        </field>
+    </record>
+
+    <!-- List view Detalhe Pagamento (nfe.document.pag.detpag) -->
+    <record id="view_nfe_document_pag_detpag_list" model="ir.ui.view">
+        <field name="name">nfe.document.pag.detpag.list</field>
+        <field name="model">nfe.document.pag.detpag</field>
+        <field name="arch" type="xml">
+            <list editable="bottom" create="true" delete="true">
+                <field name="nfe40_indPag" string="Indicador" widget="selection"/>
+                <field name="nfe40_tPag" string="Meio de pagamento" required="1" widget="selection"/>
+                <field name="nfe40_xPag" string="Descrição"/>
+                <field name="nfe40_vPag" string="Valor" required="1" widget="monetary"/>
+                <field name="nfe40_dPag" string="Data"/>
+                <field name="nfe40_CNPJPag" string="CNPJ Transacional"/>
+                <field name="nfe40_UFPag" string="UF" widget="selection"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form Pagamento -->
+    <record id="view_nfe_document_pag_form" model="ir.ui.view">
+        <field name="name">nfe.document.pag.form</field>
+        <field name="model">nfe.document.pag</field>
+        <field name="arch" type="xml">
+            <form string="Pagamento NF-e">
+                <sheet>
+                    <group string="Formas de pagamento aceitas (tPag - use o código de 2 dígitos)">
+                        <div class="text-muted" style="margin-bottom: 8px;">
+                            <p style="margin: 0 0 4px 0;"><strong>01</strong>=Dinheiro  <strong>02</strong>=Cheque  <strong>03</strong>=Cartão Crédito  <strong>04</strong>=Cartão Débito  <strong>05</strong>=Crédito Loja</p>
+                            <p style="margin: 0 0 4px 0;"><strong>10</strong>=Vale Alimentação  <strong>11</strong>=Vale Refeição  <strong>12</strong>=Vale Presente  <strong>13</strong>=Vale Combustível</p>
+                            <p style="margin: 0 0 4px 0;"><strong>15</strong>=Boleto  <strong>16</strong>=Depósito Bancário  <strong>17</strong>=PIX  <strong>18</strong>=Transferência/Carteira Digital  <strong>19</strong>=Fidelidade/Cashback</p>
+                            <p style="margin: 0;"><strong>90</strong>=Sem pagamento  <strong>99</strong>=Outros</p>
+                        </div>
+                    </group>
+                    <group string="Formas de Pagamento">
+                        <field name="detpag_ids" nolabel="1"/>
+                    </group>
+                    <group>
+                        <field name="nfe40_vTroco" string="Troco" widget="monetary"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- List view Volume (nfe.document.transp.vol) -->
+    <record id="view_nfe_document_transp_vol_list" model="ir.ui.view">
+        <field name="name">nfe.document.transp.vol.list</field>
+        <field name="model">nfe.document.transp.vol</field>
+        <field name="arch" type="xml">
+            <list editable="bottom" create="true" delete="true">
+                <field name="nfe40_qVol" string="Quantidade"/>
+                <field name="nfe40_esp" string="Espécie"/>
+                <field name="nfe40_marca" string="Marca"/>
+                <field name="nfe40_nVol" string="Numeração"/>
+                <field name="nfe40_pesoL" string="Peso Líquido (kg)" widget="float" digits="[12,3]"/>
+                <field name="nfe40_pesoB" string="Peso Bruto (kg)" widget="float" digits="[12,3]"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- List view Lacres (nfe.document.transp.vol.lacres) -->
+    <record id="view_nfe_document_transp_vol_lacres_list" model="ir.ui.view">
+        <field name="name">nfe.document.transp.vol.lacres.list</field>
+        <field name="model">nfe.document.transp.vol.lacres</field>
+        <field name="arch" type="xml">
+            <list editable="bottom" create="true" delete="true">
+                <field name="nfe40_nLacre" string="Número" required="1"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Form Volume -->
+    <record id="view_nfe_document_transp_vol_form" model="ir.ui.view">
+        <field name="name">nfe.document.transp.vol.form</field>
+        <field name="model">nfe.document.transp.vol</field>
+        <field name="arch" type="xml">
+            <form string="Volume">
+                <group>
+                    <field name="nfe40_qVol"/><field name="nfe40_esp"/><field name="nfe40_marca"/>
+                    <field name="nfe40_nVol"/><field name="nfe40_pesoL" widget="float" digits="[12,3]"/><field name="nfe40_pesoB" widget="float" digits="[12,3]"/>
+                </group>
+                <group string="Lacres">
+                    <field name="lacres_ids" nolabel="1"/>
+                </group>
+            </form>
+        </field>
+    </record>
+
+    <!-- Form Transporte -->
+    <record id="view_nfe_document_transp_form" model="ir.ui.view">
+        <field name="name">nfe.document.transp.form</field>
+        <field name="model">nfe.document.transp</field>
+        <field name="arch" type="xml">
+            <form string="Transporte NF-e">
+                <sheet>
+                    <group string="Modalidade de Frete">
+                        <field name="nfe40_modFrete" required="1" widget="selection"/>
+                    </group>
+                    <group string="Transportadora" invisible="nfe40_modFrete == '9'">
+                        <field name="transporta_id" options="{'no_create': False, 'no_open': False}"/>
+                    </group>
+                    <group string="Veículo" invisible="nfe40_modFrete == '9'">
+                        <field name="veicTransp_id" options="{'no_create': False, 'no_open': False}"/>
+                    </group>
+                    <group string="Volumes" invisible="nfe40_modFrete == '9'">
+                        <field name="vol_ids" nolabel="1"/>
+                    </group>
+                    <group string="Retenção ICMS" invisible="nfe40_modFrete == '9'">
+                        <field name="retTransp_id" options="{'no_create': False, 'no_open': False}"/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Form Transportadora -->
+    <record id="view_nfe_document_transporta_form" model="ir.ui.view">
+        <field name="name">nfe.document.transporta.form</field>
+        <field name="model">nfe.document.transporta</field>
+        <field name="arch" type="xml">
+            <form string="Transportadora">
+                <group>
+                    <field name="partner_id" options="{'no_create': False, 'no_open': False}"
+                           placeholder="Selecione um contato para preencher os dados"/>
+                </group>
+                <group string="Dados para a NF-e (preenchidos pelo parceiro ou editáveis)" col="2">
+                    <field name="nfe40_xNome" placeholder="Razão Social ou Nome"/>
+                    <field name="nfe40_IE" placeholder="Inscrição Estadual"/>
+                    <field name="nfe40_CNPJ" placeholder="14 dígitos" invisible="nfe40_CPF"/>
+                    <field name="nfe40_CPF" placeholder="11 dígitos" invisible="nfe40_CNPJ"/>
+                    <field name="nfe40_xEnder" colspan="2" placeholder="Endereço completo"/>
+                    <field name="nfe40_xMun" placeholder="Município"/>
+                    <field name="nfe40_UF" widget="selection"/>
+                </group>
+            </form>
+        </field>
+    </record>
+
+    <!-- Form Veículo -->
+    <record id="view_nfe_document_veiculo_form" model="ir.ui.view">
+        <field name="name">nfe.document.veiculo.form</field>
+        <field name="model">nfe.document.veiculo</field>
+        <field name="arch" type="xml">
+            <form string="Veículo">
+                <group>
+                    <field name="nfe40_placa"/><field name="nfe40_UF" widget="selection"/><field name="nfe40_RNTC"/>
+                </group>
+            </form>
+        </field>
+    </record>
+
+    <!-- Form Retenção ICMS -->
+    <record id="view_nfe_document_rettransp_form" model="ir.ui.view">
+        <field name="name">nfe.document.rettransp.form</field>
+        <field name="model">nfe.document.rettransp</field>
+        <field name="arch" type="xml">
+            <form string="Retenção ICMS Transporte">
+                <group>
+                    <field name="nfe40_vServ" widget="monetary"/><field name="nfe40_vBCRet" widget="monetary"/>
+                    <field name="nfe40_pICMSRet" widget="float" digits="[3,2]"/><field name="nfe40_vICMSRet" widget="monetary"/>
+                    <field name="nfe40_CFOP"/><field name="nfe40_cMunFG"/>
+                </group>
+            </form>
+        </field>
+    </record>
+</odoo>

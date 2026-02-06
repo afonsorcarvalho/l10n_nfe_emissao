@@ -162,11 +162,85 @@ def wrap_inf_evento_as_proc_evento(inf_evento_xml):
     )
 
 
+# Tag do wrapper usado no anexo da CCe (chatter): inclui resposta SEFAZ + texto da correção.
+# O retEvento (resposta) não contém xCorrecao; o texto fica em <correcaoTexto> para o DACCe.
+NFE_CCE_WRAPPER_ROOT = "nfe_cce_attachment"
+NFE_CCE_CORRECAO_TAG = "correcaoTexto"
+
+
+def wrap_cce_response_with_text(response_xml, correcao_texto):
+    """
+    Empacota a resposta SEFAZ (retEvento) e o texto da correção para anexo no documento.
+
+    O retEvento não contém xCorrecao; ao anexar no chatter guardamos o texto aqui
+    para que o DACCe (PDF) possa exibir "Texto da correção". Retorna XML único
+    com retEvento em CDATA e correcaoTexto em CDATA.
+    """
+    if not response_xml:
+        response_xml = ""
+    text = (correcao_texto or "").strip()
+    # CDATA não pode conter ]]>, substituir por espaço se existir
+    if "]]>" in text:
+        text = text.replace("]]>", " ")
+    if "]]>" in response_xml:
+        response_xml = response_xml.replace("]]>", " ")
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f"<{NFE_CCE_WRAPPER_ROOT}>"
+        f"<retEventoXml><![CDATA[{response_xml.strip()}]]></retEventoXml>"
+        f"<{NFE_CCE_CORRECAO_TAG}><![CDATA[{text}]]></{NFE_CCE_CORRECAO_TAG}>"
+        f"</{NFE_CCE_WRAPPER_ROOT}>"
+    )
+
+
+def get_ret_evento_from_cce_attachment(xml_str):
+    """
+    Retorna o XML do retEvento para uso no DaCCe (BrazilFiscalReport).
+
+    Se o conteúdo for o wrapper (nfe_cce_attachment), extrai o CDATA de retEventoXml.
+    Caso contrário retorna o próprio xml_str (anexos antigos ou resposta pura).
+    """
+    if not xml_str or not xml_str.strip():
+        return xml_str
+    s = xml_str.strip()
+    if NFE_CCE_WRAPPER_ROOT in s[:200]:
+        match = re.search(
+            r"<retEventoXml>\s*<!\[CDATA\[(.*?)\]\]>\s*</retEventoXml>",
+            s,
+            re.DOTALL,
+        )
+        if match:
+            return match.group(1).strip()
+    return xml_str
+
+
 def extract_xcorrecao_from_infevento(xml_str):
-    """Extrai texto da correção (xCorrecao) do XML infEvento."""
+    """
+    Extrai texto da correção para exibição no DACCe.
+
+    Ordem: (1) tag correcaoTexto do wrapper (anexo CCe do chatter);
+    (2) xCorrecao do XML (pedido envEvento, se algum dia for armazenado).
+    """
     if not xml_str:
         return ""
-    match = re.search(r"<xCorrecao[^>]*>([^<]*)</xCorrecao>", xml_str, re.DOTALL | re.IGNORECASE)
+    s = xml_str
+    # Wrapper do anexo CCe (correcaoTexto em CDATA ou texto direto)
+    match = re.search(
+        rf"<{NFE_CCE_CORRECAO_TAG}>\s*<!\[CDATA\[(.*?)\]\]>\s*</{NFE_CCE_CORRECAO_TAG}>",
+        s,
+        re.DOTALL,
+    )
+    if match:
+        return (match.group(1) or "").strip()
+    match = re.search(
+        rf"<{NFE_CCE_CORRECAO_TAG}[^>]*>([^<]*)</{NFE_CCE_CORRECAO_TAG}>",
+        s,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        return (match.group(1) or "").strip()
+    # XML do pedido (infEvento com detEvento/xCorrecao)
+    match = re.search(r"<xCorrecao[^>]*>([^<]*)</xCorrecao>", s, re.DOTALL | re.IGNORECASE)
     return (match.group(1) if match else "").strip()
 
 

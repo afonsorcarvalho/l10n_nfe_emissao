@@ -120,6 +120,83 @@ class FiscalDocument(models.Model):
         help="NF-e original referenciada em documento de devolução (finNFe=4).",
     )
 
+    # Vínculo com fatura (account.move) quando o documento foi criado a partir dela.
+    move_id = fields.Many2one(
+        comodel_name="account.move",
+        string="Fatura",
+        index=True,
+        copy=False,
+        help="Fatura que originou este documento fiscal (botão Emitir NF-e na fatura).",
+    )
+
+    # --- Cobrança, pagamento e transporte (modelos persistentes com id para a interface) ---
+    nfe40_cobr_id = fields.Many2one(
+        comodel_name="nfe.document.cobr",
+        string="Dados de Cobrança",
+        help="Dados da cobrança da NF-e (fatura e duplicatas). Grupo <cobr> da NFe.",
+        copy=False,
+        readonly=False,
+    )
+    # Duplicatas da cobrança (para exibir em treeview na aba Financeiro)
+    cobr_dup_ids = fields.One2many(
+        related="nfe40_cobr_id.dup_ids",
+        string="Duplicatas",
+        readonly=False,
+    )
+    nfe40_pag_id = fields.Many2one(
+        comodel_name="nfe.document.pag",
+        string="Dados de Pagamento",
+        help="Dados de pagamento da NF-e (formas de pagamento). Grupo <pag> da NFe.",
+        copy=False,
+        readonly=False,
+    )
+    # Campos relacionados para edição inline na aba Financeiro (formas de pagamento e troco)
+    pag_detpag_ids = fields.One2many(
+        related="nfe40_pag_id.detpag_ids",
+        string="Formas de pagamento (inline)",
+        readonly=False,
+    )
+    pag_v_troco = fields.Monetary(
+        related="nfe40_pag_id.nfe40_vTroco",
+        string="Troco (inline)",
+        currency_field="currency_id",
+        readonly=False,
+    )
+    nfe40_transp_id = fields.Many2one(
+        comodel_name="nfe.document.transp",
+        string="Dados de Transporte",
+        help="Dados de transporte da NF-e (transportadora, veículo, volumes). Grupo <transp> da NFe.",
+        copy=False,
+        readonly=False,
+    )
+
+    # --- Campos relacionados para edição inline na aba Entrega (evitar abrir formulário separado) ---
+    transp_mod_freite = fields.Selection(
+        related="nfe40_transp_id.nfe40_modFrete",
+        string="Modalidade do frete",
+        readonly=False,
+    )
+    transp_transporta_id = fields.Many2one(
+        related="nfe40_transp_id.transporta_id",
+        string="Transportadora",
+        readonly=False,
+    )
+    transp_veiculo_id = fields.Many2one(
+        related="nfe40_transp_id.veicTransp_id",
+        string="Veículo",
+        readonly=False,
+    )
+    transp_vol_ids = fields.One2many(
+        related="nfe40_transp_id.vol_ids",
+        string="Volumes",
+        readonly=False,
+    )
+    transp_ret_transp_id = fields.Many2one(
+        related="nfe40_transp_id.retTransp_id",
+        string="Retenção ICMS",
+        readonly=False,
+    )
+
     @api.depends("document_number")
     def _compute_nfe_xml_download_filename(self):
         """Calcula nomes para download dos XMLs: NFe-[Numero]-gerado/assinado/autorizado.xml"""
@@ -183,9 +260,10 @@ class FiscalDocument(models.Model):
     def create(self, vals_list):
         """
         Ao criar documento NF-e (55), preenche document_number com o próximo
-        da sequência da série, se série estiver definida e número vazio.
+        da sequência da série e cria registro de transporte para edição inline na aba Entrega.
         """
         docs = super().create(vals_list)
+        Transp = self.env["nfe.document.transp"]
         for doc in docs:
             if (
                 doc.document_type_id
@@ -196,16 +274,102 @@ class FiscalDocument(models.Model):
                 and not doc.nfe_key
             ):
                 doc.document_number = doc.document_serie_id.next_seq_number()
+            # Cria registro de transporte para tipo 55 se não foi passado (permite edição inline na aba Entrega)
+            if (
+                doc.document_type_id
+                and doc.document_type_id.code == "55"
+                and not doc.nfe40_transp_id
+            ):
+                transp = Transp.create({"nfe40_modFrete": "9"})
+                doc.nfe40_transp_id = transp
+            # Cria registro de pagamento para tipo 55 se não foi passado (permite edição inline na aba Financeiro)
+            if (
+                doc.document_type_id
+                and doc.document_type_id.code == "55"
+                and not doc.nfe40_pag_id
+            ):
+                doc.nfe40_pag_id = self.env["nfe.document.pag"].create({})
         return docs
+
+    # Campos relacionados para edição inline dos dados de transporte na aba Entrega
+    transp_mod_frete = fields.Selection(
+        related="nfe40_transp_id.nfe40_modFrete",
+        string="Modalidade do frete",
+        readonly=False,
+    )
+    transp_transporta_id = fields.Many2one(
+        related="nfe40_transp_id.transporta_id",
+        comodel_name="nfe.document.transporta",
+        string="Transportadora (inline)",
+        readonly=False,
+    )
+    transp_veiculo_id = fields.Many2one(
+        related="nfe40_transp_id.veicTransp_id",
+        comodel_name="nfe.document.veiculo",
+        string="Veículo (inline)",
+        readonly=False,
+    )
+    transp_vol_ids = fields.One2many(
+        related="nfe40_transp_id.vol_ids",
+        string="Volumes (inline)",
+        readonly=False,
+    )
+    transp_rettransp_id = fields.Many2one(
+        related="nfe40_transp_id.retTransp_id",
+        comodel_name="nfe.document.rettransp",
+        string="Retenção transporte (inline)",
+        readonly=False,
+    )
 
     def write(self, vals):
         """
         Protege a chave NF-e (nfe_key) contra alterações indevidas.
-        
-        Uma vez definida (na confirmação do documento), a chave não pode mais ser
-        alterada. Tentativas de modificar nfe_key quando já preenchida são bloqueadas,
-        garantindo a imutabilidade da chave de acesso após a confirmação.
+        Garante registro de transporte para NF-e 55 ao gravar campos de transporte.
         """
+        # Para NF-e 55: se está gravando algum campo de pagamento e ainda não tem registro, cria um por documento
+        pag_related = {"pag_detpag_ids", "pag_v_troco"}
+        if pag_related & set(vals) and not vals.get("nfe40_pag_id"):
+            docs_need_pag = [
+                doc
+                for doc in self
+                if doc.document_type_id
+                and doc.document_type_id.code == "55"
+                and not doc.nfe40_pag_id
+            ]
+            if docs_need_pag:
+                Pag = self.env["nfe.document.pag"]
+                for doc in docs_need_pag:
+                    pag = Pag.create({})
+                    doc.write({**vals, "nfe40_pag_id": pag.id})
+                rest = self - docs_need_pag
+                if rest:
+                    rest.write(vals)
+                return True
+        # Para NF-e 55: se está gravando algum campo de transporte e ainda não tem registro, cria um por documento
+        transp_related = {
+            "transp_mod_freite",
+            "transp_transporta_id",
+            "transp_veiculo_id",
+            "transp_vol_ids",
+            "transp_ret_transp_id",
+        }
+        if transp_related & set(vals) and not vals.get("nfe40_transp_id"):
+            docs_need_transp = [
+                doc
+                for doc in self
+                if doc.document_type_id
+                and doc.document_type_id.code == "55"
+                and not doc.nfe40_transp_id
+            ]
+            if docs_need_transp:
+                Transp = self.env["nfe.document.transp"]
+                for doc in docs_need_transp:
+                    transp = Transp.create({"nfe40_modFrete": "9"})
+                    doc.write({**vals, "nfe40_transp_id": transp.id})
+                rest = self - docs_need_transp
+                if rest:
+                    rest.write(vals)
+                return True
         # Se a escrita não envolve nfe_key, segue normalmente
         if "nfe_key" not in vals:
             return super().write(vals)
@@ -224,6 +388,68 @@ class FiscalDocument(models.Model):
                 )
         
         return super().write(vals)
+
+    def read(self, fields=None, load="_classic_read"):
+        """
+        Garante registros de pagamento e transporte para NF-e 55 em digitação ao carregar,
+        para que os campos das abas Financeiro e Entrega sejam editáveis (related exige o Many2one).
+        """
+        need_pag = (
+            fields is None
+            or "nfe40_pag_id" in (fields or [])
+            or "pag_detpag_ids" in (fields or [])
+            or "pag_v_troco" in (fields or [])
+        )
+        if need_pag:
+            docs_no_pag = self.filtered(lambda d: not d.nfe40_pag_id)
+            if docs_no_pag:
+                need_attrs = ["state_edoc", "document_type_id"]
+                if fields and not all(f in fields for f in need_attrs):
+                    docs_no_pag.read(need_attrs)
+                to_create_pag = []
+                for doc in docs_no_pag:
+                    if getattr(doc, "state_edoc", None) != "em_digitacao":
+                        continue
+                    dt = doc.document_type_id
+                    if not dt or getattr(dt, "code", None) != "55":
+                        continue
+                    to_create_pag.append((doc, self.env["nfe.document.pag"].create({})))
+                for doc, pag in to_create_pag:
+                    doc.write({"nfe40_pag_id": pag.id})
+        need_transp = (
+            fields is None
+            or "nfe40_transp_id" in (fields or [])
+            or any(
+                f in (fields or [])
+                for f in (
+                    "transp_mod_freite",
+                    "transp_transporta_id",
+                    "transp_veiculo_id",
+                    "transp_vol_ids",
+                    "transp_ret_transp_id",
+                )
+            )
+        )
+        if need_transp:
+            docs_no_transp = self.filtered(lambda d: not d.nfe40_transp_id)
+            if docs_no_transp:
+                need_attrs = ["state_edoc", "document_type_id"]
+                if fields and not all(f in fields for f in need_attrs):
+                    docs_no_transp.read(need_attrs)
+                to_create = []
+                for doc in docs_no_transp:
+                    if getattr(doc, "state_edoc", None) != "em_digitacao":
+                        continue
+                    dt = doc.document_type_id
+                    if not dt or getattr(dt, "code", None) != "55":
+                        continue
+                    transp = self.env["nfe.document.transp"].create(
+                        {"nfe40_modFrete": "9"}
+                    )
+                    to_create.append((doc, transp))
+                for doc, transp in to_create:
+                    doc.write({"nfe40_transp_id": transp.id})
+        return super().read(fields=fields, load=load)
 
     def _create_return(self):
         """Cria documento de devolução e vincula à NF-e de origem."""

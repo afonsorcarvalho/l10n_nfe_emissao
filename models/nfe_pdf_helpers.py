@@ -11,6 +11,72 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
+# Fuso padrão para exibição de datas de evento SEFAZ (dhRegEvento vem em -03:00)
+_DEFAULT_TZ_DISPLAY = "America/Sao_Paulo"
+
+
+def _format_protocol_date_local(prot_date, document):
+    """
+    Formata a data do protocolo (armazenada em UTC no banco) para o fuso da empresa.
+    dhRegEvento na SEFAZ vem ex.: 2026-02-05T22:10:46-03:00; no banco fica UTC naive (01:10:46 do dia 06).
+    Retorna string DD/MM/YYYY HH:MM:SS no fuso America/Sao_Paulo (ou company.tz).
+    Usa zoneinfo (stdlib) para não depender de pytz no container.
+    """
+    if not prot_date:
+        return ""
+    from datetime import datetime
+
+    # Normalizar para datetime (naive UTC quando vindo do banco; string no formato Odoo ou ISO)
+    dt = prot_date
+    if isinstance(dt, str):
+        s = (dt or "").strip()[:26]
+        try:
+            # Formato Odoo: "2026-02-06 01:32:36" ou ISO "2026-02-06T01:32:36"
+            dt = datetime.strptime(s[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                from dateutil.parser import parse as dateutil_parse
+                dt = dateutil_parse(s.replace("Z", "+00:00"))
+            except Exception:
+                _logger.warning("_format_protocol_date_local: não foi possível interpretar data %r", prot_date)
+                return str(prot_date)[:25]
+
+    tz_display = _DEFAULT_TZ_DISPLAY
+    company = getattr(document, "company_id", None)
+    if company:
+        # res.company pode não ter campo 'tz' (depende do módulo de localização); usar getattr
+        tz_name = (getattr(company, "tz", None) or "").strip()
+        if tz_name:
+            tz_display = tz_name
+
+    try:
+        from zoneinfo import ZoneInfo
+        utc = ZoneInfo("UTC")
+        local_tz = ZoneInfo(tz_display)
+    except Exception:
+        try:
+            import pytz
+            utc = pytz.utc
+            local_tz = pytz.timezone(tz_display)
+        except Exception as e:
+            _logger.warning("_format_protocol_date_local: zoneinfo/pytz indisponível (%s), exibindo UTC", e)
+            if hasattr(prot_date, "strftime"):
+                return prot_date.strftime("%d/%m/%Y %H:%M:%S")
+            return str(prot_date)[:25]
+
+    try:
+        if getattr(dt, "tzinfo", None) is None:
+            dt_utc = dt.replace(tzinfo=utc)
+        else:
+            dt_utc = dt.astimezone(utc)
+        dt_local = dt_utc.astimezone(local_tz)
+        return dt_local.strftime("%d/%m/%Y %H:%M:%S")
+    except Exception as e:
+        _logger.warning("_format_protocol_date_local: conversão de fuso falhou (%s), exibindo valor original", e)
+        if hasattr(prot_date, "strftime"):
+            return prot_date.strftime("%d/%m/%Y %H:%M:%S")
+        return str(prot_date)[:25]
+
 
 def build_cce_fallback_pdf(document, x_correcao, n_prot=None):
     """
@@ -164,6 +230,24 @@ def build_cancelada_banner_pdf(document):
         pdf.cell(40, h_cell, "Chave de acesso:", border=1, new_x="RIGHT", new_y="TOP")
         pdf.set_font("Helvetica", "", 7)
         pdf.cell(w_full - 40, h_cell, chave, border=1, new_x="LMARGIN", new_y="NEXT")
+        # Protocolo do evento de cancelamento (retEvento/infEvento: nProt, dhRegEvento)
+        cancel_event = getattr(document, "cancel_event_id", None)
+        if cancel_event:
+            prot_num = (cancel_event.protocol_number or "").strip()
+            prot_date = cancel_event.protocol_date
+            if prot_num or prot_date:
+                pdf.ln(2)
+                if prot_num:
+                    pdf.set_font("Helvetica", "B", 9)
+                    pdf.cell(40, h_cell, "Protocolo do evento:", border=1, new_x="RIGHT", new_y="TOP")
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.cell(w_full - 40, h_cell, prot_num[:60], border=1, new_x="LMARGIN", new_y="NEXT")
+                if prot_date:
+                    prot_date_str = _format_protocol_date_local(prot_date, document)
+                    pdf.set_font("Helvetica", "B", 9)
+                    pdf.cell(40, h_cell, "Data do registro:", border=1, new_x="RIGHT", new_y="TOP")
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.cell(w_full - 40, h_cell, prot_date_str[:40], border=1, new_x="LMARGIN", new_y="NEXT")
         # Justificativa do cancelamento: documento (cancel_reason) ou evento de cancelamento
         justificativa = (getattr(document, "cancel_reason", None) or "").strip()
         if not justificativa and getattr(document, "cancel_event_id", None):

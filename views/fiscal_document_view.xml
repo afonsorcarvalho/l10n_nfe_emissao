@@ -8,14 +8,72 @@
         <field name="model">l10n_br_fiscal.document</field>
         <field name="inherit_id" ref="l10n_br_fiscal.document_form" />
         <field name="arch" type="xml">
+            <!-- Ribbon com status do documento: antes do título (oe_title), dentro do sheet. Evita conflito com oe_button_box. -->
+            <xpath expr="//div[@class='oe_title']" position="before">
+                <field name="state_edoc" invisible="1"/>
+                <widget
+                    name="web_ribbon"
+                    title="Em digitação"
+                    bg_color="bg-secondary"
+                    invisible="state_edoc != 'em_digitacao'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Aguardando envio"
+                    bg_color="bg-info"
+                    invisible="state_edoc != 'a_enviar'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Aguardando processamento"
+                    bg_color="bg-info"
+                    invisible="state_edoc != 'enviada'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Autorizada"
+                    bg_color="bg-success"
+                    invisible="state_edoc != 'autorizada'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Rejeitada"
+                    bg_color="bg-danger"
+                    invisible="state_edoc != 'rejeitada'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Cancelada"
+                    bg_color="bg-warning"
+                    invisible="state_edoc != 'cancelada'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Denegada"
+                    bg_color="bg-danger"
+                    invisible="state_edoc != 'denegada'"
+                />
+                <widget
+                    name="web_ribbon"
+                    title="Inutilizada"
+                    bg_color="bg-secondary"
+                    invisible="state_edoc != 'inutilizada'"
+                />
+            </xpath>
+
+            <!-- Classe no sheet para conter o ribbon (evita overflow). XPath //sheet (único sheet no form base). -->
+            <xpath expr="//sheet" position="attributes">
+                <attribute name="class" add="o_sheet_ribbon_contain" separator=" "/>
+            </xpath>
+
             <!-- Oculta botão Visualizar XML (XMLs na aba EDI) -->
             <xpath expr="//button[@name='view_xml']" position="attributes">
                 <attribute name="invisible">1</attribute>
             </xpath>
             
-            <!-- Ajusta botão "Enviar" padrão para NF-e: visível em 'a_enviar' OU em 'em_digitacao' com chave (reenvio) -->
-            <xpath expr="//button[@name='action_document_send'][@string='Enviar']" position="attributes">
-                <attribute name="invisible">state_edoc != 'a_enviar' and (state_edoc != 'em_digitacao' or not nfe_key or document_type != '55')</attribute>
+            <!-- Botão "Enviar": visível apenas quando confirmado (a_enviar). Em digitação fica invisível. -->
+            <xpath expr="//button[@name='action_document_send']" position="attributes">
+                <attribute name="invisible">state_edoc != 'a_enviar' or document_type != '55'</attribute>
             </xpath>
 
             <!-- Oculta o título "55 - Nota Fiscal Eletrônica" para documentos tipo 55 -->
@@ -24,8 +82,9 @@
             </xpath>
             
             <!-- Adiciona motivo da rejeição logo abaixo do título/ribbon -->
-            <xpath expr="//sheet/div[@class='oe_title']" position="after">
-                <div style="padding: 12px 15px; margin-bottom: 15px; background-color: #fff3cd; border-left: 4px solid #dc3545; color: #721c24;" invisible="state_edoc != 'rejeitada' or document_type != '55'">
+            <!-- <xpath expr="//sheet/div[@class='oe_title']" position="after"> -->
+            <xpath expr="(//div[hasclass('alert-danger')])[2]" position="inside">
+                <div style="padding: 12px 15px; margin-bottom: 15px;  color: #721c24;" invisible="state_edoc != 'rejeitada' or document_type != '55'">
                     <div style="margin-bottom: 8px; font-weight: bold; font-size: 14px;">
                         <i class="fa fa-exclamation-triangle" style="color: #dc3545;"/> Motivo da Rejeição:
                     </div>
@@ -38,9 +97,9 @@
                 </div>
             </xpath>
             
-            <!-- Ajusta botão "Confirmar" padrão: para NF-e (55), só visível em 'em_digitacao' sem chave -->
+            <!-- Botão "Confirmar": visível em "Em digitação" (igual ao base; chave NF-e impede nova confirmação no backend). -->
             <xpath expr="//button[@name='action_document_confirm']" position="attributes">
-                <attribute name="invisible">state_edoc != 'em_digitacao' or (document_type == '55' and nfe_key)</attribute>
+                <attribute name="invisible">state_edoc != 'em_digitacao'</attribute>
                 <attribute name="help">Confirma o documento. Para NF-e: gera a chave de acesso (imutável após confirmação) e altera o estado para 'Aguardando envio'.</attribute>
             </xpath>
             
@@ -56,18 +115,17 @@
                 />
             </header>
 
-            <!-- Série: readonly quando há chave (após confirmação) -->
+            <!-- Série e Número: editáveis apenas em "Em digitação" (chave NF-e sempre readonly no modelo). -->
             <field name="document_serie_id" position="attributes">
-                <attribute name="readonly">nfe_key</attribute>
+                <attribute name="readonly">state_edoc != 'em_digitacao' or (document_type == '55' and nfe_key)</attribute>
             </field>
             
-            <!-- Adiciona campo número para edição fácil; readonly quando há chave -->
             <field name="document_serie_id" position="after">
                 <field
                     name="document_number"
                     string="Número"
-                    help="Número do documento. Pode ser alterado antes da confirmação."
-                    readonly="nfe_key"
+                    help="Número do documento. Editável apenas em Em digitação."
+                    readonly="state_edoc != 'em_digitacao' or (document_type == '55' and nfe_key)"
                 />
             </field>
 
@@ -79,7 +137,7 @@
                     invisible="document_type != '55'"
                     col="2"
                 >
-                    <field name="nfe_key" invisible="not nfe_key" string="Chave NF-e" help="Chave de acesso (imutável após confirmação). Protocolo, XMLs e DANFE estão na aba EDI." />
+                    <field name="nfe_key" invisible="not nfe_key" readonly="1" string="Chave NF-e" help="Chave de acesso (imutável após confirmação). Protocolo, XMLs e DANFE estão na aba EDI." />
                     <field name="return_origin_document_id" invisible="not return_origin_document_id" />
                 </group>
             </group>
@@ -91,6 +149,49 @@
             -->
             <xpath expr="//chatter" position="before">
                 <div class="o_attachment_preview"/>
+            </xpath>
+
+            <!-- Página Delivery: editável quando status é "Em digitação". Transporte criado ao carregar se faltar. -->
+            <xpath expr="//page[@name='delivery']" position="inside">
+                <group invisible="document_type != '55'" string="Dados de Transporte">
+                    <field name="nfe40_transp_id" invisible="1"/>
+                    <field name="transp_mod_freite" readonly="state_edoc != 'em_digitacao'"/>
+                    <field name="transp_transporta_id" readonly="state_edoc != 'em_digitacao'" context="{'default_company_id': company_id}" options="{'no_create': True}"/>
+                    <field name="transp_veiculo_id" readonly="state_edoc != 'em_digitacao'" options="{'no_create': True}"/>
+                    <field name="transp_ret_transp_id" readonly="state_edoc != 'em_digitacao'" options="{'no_create': True}"/>
+                </group>
+                <group invisible="document_type != '55'" string="Volumes">
+                    <field name="transp_vol_ids" readonly="state_edoc != 'em_digitacao'" nolabel="1" context="{'default_company_id': company_id}"/>
+                </group>
+            </xpath>
+
+            <!-- Página Finance: Formas de pagamento editáveis na própria aba (inline), depois Cobrança. -->
+            <xpath expr="//page[@name='finance']" position="inside">
+                <group invisible="document_type != '55'" string="Formas de Pagamento">
+                    <field name="nfe40_pag_id" invisible="1"/>
+                    <field name="pag_detpag_ids"
+                           string="Formas de pagamento"
+                           nolabel="1"
+                           widget="list"
+                           readonly="state_edoc != 'em_digitacao'"
+                           context="{'default_company_id': company_id}"/>
+                    <field name="pag_v_troco" readonly="state_edoc != 'em_digitacao'" widget="monetary"/>
+                </group>
+                <group invisible="document_type != '55'" string="Cobrança (Fatura e Duplicatas)">
+                    <field name="nfe40_cobr_id" invisible="1"/>
+                    <field name="nfe40_cobr_id"
+                           string="Cobrança"
+                           context="{'default_company_id': company_id}"
+                           readonly="state_edoc != 'em_digitacao'"
+                           options="{'no_create': False, 'no_open': False}"
+                           help="Crie ou abra o registro para fatura. As duplicatas aparecem na lista abaixo."/>
+                    <field name="cobr_dup_ids"
+                           string="Duplicatas"
+                           nolabel="1"
+                           widget="list"
+                           readonly="state_edoc != 'em_digitacao'"
+                           context="{'default_company_id': company_id}"/>
+                </group>
             </xpath>
         </field>
     </record>
